@@ -17,7 +17,7 @@ def test_create_content_node():
         node = models.ContentNode(url="https://example.com/test", title="Test Page")
         session.add(node)
         session.commit()
-        assert node.id is not None
+        assert node.node_id is not None
     finally:
         session.query(models.ContentNode).filter_by(url="https://example.com/test").delete()
         session.commit()

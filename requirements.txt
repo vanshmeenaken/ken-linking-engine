@@ -4,3 +4,5 @@ sqlalchemy
 python-dotenv
 pydantic
 pytest
+requests
+beautifulsoup4

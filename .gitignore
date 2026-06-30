@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .env
 *.db
+logs/*.log
+*.db-journal
+tmp/
+.playwright-mcp/
+.gitignore~*

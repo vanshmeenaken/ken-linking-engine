@@ -147,6 +147,22 @@ python scripts/02_load_urls.py scripts/sample_urls.csv
 python scripts/03_validate_data.py
 ```
 
+### Run Content Inventory Agent (Agent 1)
+```bash
+# Required 50-page read-only validation
+python agents/agent_1_content_inventory.py --limit 50 --dry-run
+
+# Collect site-wide incoming-link evidence
+python scripts/05_collect_sitewide_links.py --workers 50
+
+# Enrich all 500 pages using the verified snapshot
+python agents/agent_1_content_inventory.py --workers 50 \
+  --incoming-snapshot data/sitewide_incoming_snapshot.json
+```
+
+See `docs/09-AGENTS/01-CONTENT-INVENTORY-AGENT.md` for metric definitions,
+safety guarantees, evidence scope and verification commands.
+
 ### Run tests
 ```bash
 pytest tests/

@@ -23,7 +23,7 @@
 | indexability_status | TEXT | indexable / noindex / blocked |
 | crawl_depth | INTEGER | |
 | internal_links_in, internal_links_out | INTEGER | link counts |
-| orphan_status | INTEGER | 0 = linked, 1 = orphan |
+| orphan_status | VARCHAR | orphan, under_linked, normal, or well_linked |
 | page_authority_score, search_opportunity_score, ai_readiness_score | REAL | scores |
 | status | TEXT | active / inactive |
 | created_at, updated_at | TEXT | timestamps |

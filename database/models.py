@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, Index
@@ -33,13 +33,13 @@ class ContentNode(Base):
     crawl_depth = Column(Integer)
     internal_links_in = Column(Integer, default=0)
     internal_links_out = Column(Integer, default=0)
-    orphan_status = Column(Integer)
+    orphan_status = Column(String)
     page_authority_score = Column(Float)
     search_opportunity_score = Column(Float)
     ai_readiness_score = Column(Float)
     status = Column(String, default="active")
-    created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
-    updated_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+    created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
     outgoing_edges = relationship("RelationshipEdge", foreign_keys="RelationshipEdge.source_node_id", back_populates="source_node", cascade="all, delete-orphan")
     incoming_edges = relationship("RelationshipEdge", foreign_keys="RelationshipEdge.target_node_id", back_populates="target_node", cascade="all, delete-orphan")
@@ -59,8 +59,8 @@ class ContentEntity(Base):
     country = Column(String)
     region = Column(String)
     confidence_score = Column(Float, default=0.0)
-    created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
-    updated_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+    created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
     parent_entity = relationship("ContentEntity", remote_side=[entity_id], backref="child_entities")
 
@@ -85,8 +85,8 @@ class RelationshipEdge(Base):
     created_by = Column(String)
     reviewed_by = Column(String)
     status = Column(String, default="pending")
-    created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
-    updated_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+    created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
     source_node = relationship("ContentNode", foreign_keys=[source_node_id], back_populates="outgoing_edges")
     target_node = relationship("ContentNode", foreign_keys=[target_node_id], back_populates="incoming_edges")
@@ -106,7 +106,7 @@ class CrawlLog(Base):
     crawl_depth = Column(Integer)
     error = Column(Text)
     notes = Column(Text)
-    crawled_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+    crawled_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
     content_node = relationship("ContentNode", back_populates="crawl_logs")
 

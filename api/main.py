@@ -37,7 +37,7 @@ def stats():
         "SELECT COUNT(*) FROM content_nodes WHERE status = 'active'"
     ).fetchone()[0]
     orphan = conn.execute(
-        "SELECT COUNT(*) FROM content_nodes WHERE orphan_status IS NOT NULL AND orphan_status != ''"
+        "SELECT COUNT(*) FROM content_nodes WHERE orphan_status = 'orphan'"
     ).fetchone()[0]
     avg_links = conn.execute(
         "SELECT ROUND(AVG(internal_links_in), 2) FROM content_nodes"
