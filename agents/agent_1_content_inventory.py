@@ -21,10 +21,37 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
+import os
+
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from openai import OpenAI
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+load_dotenv()
+_NVIDIA_CLIENT = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.getenv("NVIDIA_API_KEY", ""),
+)
+_NVIDIA_MODEL = "meta/llama-3.1-8b-instruct"
+_INDUSTRIES_LIST = "\n".join([
+    "Agriculture & Animal Care",
+    "Automotive, Transportation & Logistics",
+    "BFSI",
+    "Consumer Products & Retail",
+    "Defense & Security",
+    "Education & Recruitment",
+    "Energy & Utilities",
+    "Food, Beverage & Tobacco",
+    "Healthcare",
+    "Metal, Mining and Chemicals",
+    "Manufacturing & Construction",
+    "Media & Entertainment",
+    "Public Sector and Administration",
+    "Technology & Telecom",
+])
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +59,22 @@ DEFAULT_DB = ROOT / "ken_links.db"
 REPORT_DIR = ROOT / "reports"
 LOG_DIR = ROOT / "logs"
 KEN_HOSTS = {"kenresearch.com", "www.kenresearch.com"}
+KNOWN_INDUSTRIES = {
+    "agriculture & animal care",
+    "automotive, transportation & logistics",
+    "bfsi",
+    "consumer products & retail",
+    "defense & security",
+    "education & recruitment",
+    "energy & utilities",
+    "food, beverage & tobacco",
+    "healthcare",
+    "metal, mining and chemicals",
+    "manufacturing & construction",
+    "media & entertainment",
+    "public sector and administration",
+    "technology & telecom",
+}
 USER_AGENT = (
     "Mozilla/5.0 (compatible; KenResearchContentInventory/1.0; "
     "+https://www.kenresearch.com/)"
@@ -53,6 +96,7 @@ class PageResult:
     internal_links_out: int = 0
     internal_links_in: int = 0
     orphan_status: str = ""
+    industry: str = ""
     page_authority_score: float = 0.0
     http_status: int | None = None
     elapsed_ms: float = 0.0
@@ -89,6 +133,154 @@ def normalize_url(url: str, base_url: str | None = None) -> str:
 def calculate_crawl_depth(url: str) -> int:
     """Calculate structural path depth required by the Day 4 specification."""
     return len([part for part in urlsplit(url).path.split("/") if part])
+
+
+def extract_industry_from_breadcrumb(soup: BeautifulSoup) -> str:
+    """Read industry directly from page breadcrumb. Returns empty string if not found."""
+    # Try JSON-LD structured data first (most reliable)
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+            # kenresearch uses @graph wrapper — flatten it
+            if isinstance(data, dict) and "@graph" in data:
+                candidates = data["@graph"]
+            elif isinstance(data, list):
+                candidates = data
+            else:
+                candidates = [data]
+            for node in candidates:
+                if not isinstance(node, dict):
+                    continue
+                if node.get("@type") == "BreadcrumbList":
+                    items = node.get("itemListElement", [])
+                    for item in items:
+                        if item.get("position") == 2:
+                            name = (item.get("name") or "").strip()
+                            if name and name.lower() != "home":
+                                return _match_industry(name) or name
+        except Exception:
+            pass
+    # Try HTML breadcrumb elements
+    breadcrumb = soup.find(attrs={"aria-label": lambda v: v and "breadcrumb" in v.lower()})
+    if not breadcrumb:
+        breadcrumb = soup.find(
+            class_=lambda c: c and "breadcrumb" in (c if isinstance(c, str) else " ".join(c)).lower()
+        )
+    if breadcrumb:
+        texts = [el.get_text(strip=True) for el in breadcrumb.find_all(["a", "span", "li"]) if el.get_text(strip=True)]
+        # texts[0] = Home, texts[1] = industry, texts[2] = report title
+        if len(texts) > 1 and texts[1].lower() != "home":
+            return texts[1]
+    return ""
+
+
+_INDUSTRY_NORM = {
+    ind.lower().replace(" & ", " and "): ind
+    for ind in [
+        "Agriculture & Animal Care",
+        "Automotive, Transportation & Logistics",
+        "BFSI",
+        "Consumer Products & Retail",
+        "Defense & Security",
+        "Education & Recruitment",
+        "Energy & Utilities",
+        "Food, Beverage & Tobacco",
+        "Healthcare",
+        "Metal, Mining and Chemicals",
+        "Manufacturing & Construction",
+        "Media & Entertainment",
+        "Public Sector and Administration",
+        "Technology & Telecom",
+    ]
+}
+
+
+def _match_industry(raw: str) -> str:
+    """Map a raw tag or breadcrumb value to a standard industry name."""
+    key = raw.lower().replace(" & ", " and ").strip()
+    if key in _INDUSTRY_NORM:
+        return _INDUSTRY_NORM[key]
+    # Prefix match — handles "Automotive, Transportation and Warehousing" → our standard label
+    for norm_key, label in _INDUSTRY_NORM.items():
+        prefix = " ".join(norm_key.split()[:2])
+        if len(prefix) > 5 and key.startswith(prefix):
+            return label
+    return ""
+
+
+_AI_CLASSIFY_LOCK = __import__("threading").Lock()
+_AI_LAST_CALL_TIME: list[float] = [0.0]
+_AI_MIN_INTERVAL = 2.0  # seconds between API calls to avoid 429
+
+
+def _classify_industry_with_ai(tags: list[str], title: str = "") -> str:
+    """Use NVIDIA AI to map case study tags or title to the closest of 14 industries."""
+    if not os.getenv("NVIDIA_API_KEY"):
+        return ""
+    if not tags and not title:
+        return ""
+    if tags:
+        user_content = f"Tags from case study page: {', '.join(tags)}"
+    else:
+        user_content = f"Case study page title: {title}"
+    user_content += "\n\nWhich ONE of the 14 industries does this belong to? Reply with ONLY the exact industry name."
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an industry classifier for Ken Research. "
+                "Given tags or a title from a case study page, pick the single best matching industry. "
+                "Reply with ONLY the exact industry name from the list below. Nothing else.\n\n"
+                f"Industries:\n{_INDUSTRIES_LIST}"
+            ),
+        },
+        {"role": "user", "content": user_content},
+    ]
+    for attempt in range(4):
+        try:
+            with _AI_CLASSIFY_LOCK:
+                elapsed = time.time() - _AI_LAST_CALL_TIME[0]
+                if elapsed < _AI_MIN_INTERVAL:
+                    time.sleep(_AI_MIN_INTERVAL - elapsed)
+                _AI_LAST_CALL_TIME[0] = time.time()
+            response = _NVIDIA_CLIENT.chat.completions.create(
+                model=_NVIDIA_MODEL,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=20,
+            )
+            answer = response.choices[0].message.content.strip()
+            for industry in _INDUSTRIES_LIST.split("\n"):
+                if industry.lower() == answer.lower():
+                    return industry
+            return ""  # Unknown answer → leave blank, never save garbage
+        except Exception as exc:
+            wait = 5 * (2 ** attempt)
+            logging.warning("NVIDIA API attempt %d failed (%s) — retry in %ds", attempt + 1, exc, wait)
+            time.sleep(wait)
+    return ""
+
+
+def extract_industry_from_related_tags(soup: BeautifulSoup, title: str = "") -> str:
+    """Extract industry from Related tags section on case study pages.
+    Falls back to AI classification using page title if tags are missing or ambiguous."""
+    heading = next(
+        (h for h in soup.find_all(["h2", "h3", "h4"])
+         if "related tag" in h.get_text().lower()),
+        None,
+    )
+    tags = []
+    if heading:
+        container = heading.find_next_sibling()
+        if container:
+            tags = [p.get_text(strip=True) for p in container.find_all("p") if p.get_text(strip=True)]
+    # Try exact/prefix match first (free, instant)
+    for tag in tags:
+        matched = _match_industry(tag)
+        if matched:
+            return matched
+    # AI: use tags if available, else fall back to title
+    return _classify_industry_with_ai(tags, title=title)
 
 
 def classify_content_type(
@@ -231,6 +423,10 @@ class ContentInventoryAgent:
             result.meta_description = description.get("content", "").strip() if description else ""
             h1 = soup.find("h1")
             result.h1 = h1.get_text(" ", strip=True) if h1 else ""
+            if result.content_type == "case_study":
+                result.industry = extract_industry_from_related_tags(soup, title=result.h1 or result.title)
+            else:
+                result.industry = extract_industry_from_breadcrumb(soup)
             canonical = soup.find("link", rel=lambda value: value and "canonical" in str(value).lower())
             result.canonical_url = (
                 normalize_url(canonical.get("href", ""), result.final_url)
@@ -343,11 +539,13 @@ class ContentInventoryAgent:
                     """UPDATE content_nodes SET
                     canonical_url=?, title=COALESCE(NULLIF(?,''),title),
                     meta_title=?, meta_description=?, h1=?, content_type=?,
+                    industry=CASE WHEN ? != '' THEN ? ELSE industry END,
                     indexability_status=?, crawl_depth=?, internal_links_in=?,
                     internal_links_out=?, orphan_status=?, page_authority_score=?,
                     updated_at=? WHERE node_id=?""",
                     (result.canonical_url, result.title, result.title,
                      result.meta_description, result.h1, result.content_type,
+                     result.industry, result.industry,
                      result.indexability_status, result.crawl_depth,
                      result.internal_links_in, result.internal_links_out,
                      result.orphan_status, result.page_authority_score,
