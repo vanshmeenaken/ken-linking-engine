@@ -65,7 +65,7 @@ ken-linking-engine/
 │   ├── Ken_Intelligence_Linking_PRD_Summary.md
 │   └── ... (5 more docs)
 │
-├── api/                      FastAPI server (coming Day 6)
+├── api/                      FastAPI server (8 REST endpoints)
 ├── config/                   Configuration & settings
 ├── database/                 SQLAlchemy models (4 tables)
 ├── scripts/                  Setup, load, validate scripts
@@ -167,6 +167,34 @@ safety guarantees, evidence scope and verification commands.
 ```bash
 pytest tests/
 ```
+
+## 🌐 API Server
+
+A read-only FastAPI server exposes the content inventory over REST for the
+dashboard and the future Content Inventory MCP server.
+
+### Start the server
+```bash
+python api/main.py
+# or: python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+
+Then open the interactive Swagger UI at **http://localhost:8000/docs**.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/` | Health check |
+| GET | `/api/stats` | Overall metrics (totals, orphans, avg scores) |
+| GET | `/api/pages` | List pages (paginated: `skip`, `limit`, filters) |
+| GET | `/api/pages/orphans` | Orphan pages (0 incoming links) |
+| GET | `/api/pages/{node_id}` | Single page detail (by node_id or URL fragment) |
+| GET | `/api/taxonomy/industries` | Unique industries + counts (filter dropdown) |
+| GET | `/api/taxonomy/countries` | Unique countries + counts (filter dropdown) |
+| GET | `/docs` | Swagger UI (auto-generated) |
+
+Full request/response examples: **[docs/API.md](docs/API.md)**.
 
 ## 📋 Status
 
