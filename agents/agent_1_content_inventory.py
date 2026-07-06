@@ -79,6 +79,19 @@ USER_AGENT = (
     "Mozilla/5.0 (compatible; KenResearchContentInventory/1.0; "
     "+https://www.kenresearch.com/)"
 )
+# Template CTA/utility paths repeated on every report page — carry no market
+# relationship signal, so they are excluded from internal_links_out.
+UTILITY_PATH_PREFIXES = (
+    "/custom-form",
+    "/sample-report",
+    "/talk-to-us",
+    "/book-a-discovery-call",
+    "/contact-us",
+    "/about-us",
+    "/careers",
+    "/terms-and-conditions",
+    "/privacy-policy",
+)
 
 
 @dataclass
@@ -444,11 +457,25 @@ class ContentInventoryAgent:
                 result.indexability_status = "noindex"
             else:
                 result.indexability_status = "indexable"
+            # Count only editorial/content links: sitewide chrome (header menus,
+            # nav bars, footers) repeats on every page and would inflate counts.
+            for chrome in soup.find_all(["header", "nav", "footer"]):
+                chrome.decompose()
+            for chrome in soup.find_all(attrs={"role": "navigation"}):
+                chrome.decompose()
+            # Ken's header/footer are Tailwind divs, not semantic tags: the whole
+            # menu block sits in a sticky container pinned to the viewport top.
+            for chrome in soup.find_all(
+                "div",
+                class_=lambda classes: classes and "sticky" in classes and "top-0" in classes,
+            ):
+                chrome.decompose()
             outbound = {
                 normalized
                 for anchor in soup.find_all("a", href=True)
                 if (normalized := normalize_url(anchor.get("href", ""), result.final_url))
                 and (urlsplit(normalized).hostname or "").lower() in KEN_HOSTS
+                and not urlsplit(normalized).path.startswith(UTILITY_PATH_PREFIXES)
             }
             outbound.discard(result.canonical_url)
             result.outbound_urls = tuple(sorted(outbound))

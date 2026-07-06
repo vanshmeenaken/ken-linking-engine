@@ -4,12 +4,13 @@ import time
 from typing import Optional
 
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 from config.settings import API_HOST, API_PORT
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, "ken_links.db")
+DASHBOARD_PATH = os.path.join(ROOT, "dashboard", "index.html")
 
 app = FastAPI(
     title="Ken Intelligence Linking Engine",
@@ -29,6 +30,13 @@ def get_db():
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Ken Intelligence Linking Engine Phase 1"}
+
+
+# ── Human-friendly dashboard (no raw JSON) ───────────────────────────────────
+
+@app.get("/dashboard")
+def dashboard():
+    return FileResponse(DASHBOARD_PATH)
 
 
 # ── 2. Database statistics ───────────────────────────────────────────────────
@@ -64,6 +72,84 @@ def get_stats():
     }
 
 
+# ── 2b. Detailed metrics ─────────────────────────────────────────────────────
+
+@app.get("/api/metrics")
+def get_metrics():
+    conn = get_db()
+
+    total = conn.execute("SELECT COUNT(*) FROM content_nodes").fetchone()[0]
+    active = conn.execute(
+        "SELECT COUNT(*) FROM content_nodes WHERE status = 'active'"
+    ).fetchone()[0]
+
+    content_types = {
+        row["content_type"]: row["n"]
+        for row in conn.execute(
+            """SELECT COALESCE(NULLIF(content_type,''), 'unknown') AS content_type,
+                      COUNT(*) AS n
+               FROM content_nodes GROUP BY content_type ORDER BY n DESC"""
+        )
+    }
+    industries = {
+        row["industry"]: row["n"]
+        for row in conn.execute(
+            """SELECT industry, COUNT(*) AS n FROM content_nodes
+               WHERE industry IS NOT NULL AND industry != ''
+               GROUP BY industry ORDER BY n DESC"""
+        )
+    }
+    countries = {
+        row["country"]: row["n"]
+        for row in conn.execute(
+            """SELECT country, COUNT(*) AS n FROM content_nodes
+               WHERE country IS NOT NULL AND country != ''
+               GROUP BY country ORDER BY n DESC"""
+        )
+    }
+
+    link_row = conn.execute(
+        """SELECT ROUND(AVG(internal_links_in),2) AS avg_in,
+                  MIN(internal_links_in) AS min_in,
+                  MAX(internal_links_in) AS max_in,
+                  ROUND(AVG(internal_links_out),2) AS avg_out,
+                  MIN(internal_links_out) AS min_out,
+                  MAX(internal_links_out) AS max_out
+           FROM content_nodes"""
+    ).fetchone()
+    link_distribution = {
+        "internal_links_in": {
+            "avg": link_row["avg_in"], "min": link_row["min_in"], "max": link_row["max_in"],
+        },
+        "internal_links_out": {
+            "avg": link_row["avg_out"], "min": link_row["min_out"], "max": link_row["max_out"],
+        },
+    }
+
+    orphan_analysis = {
+        row["orphan_status"]: row["n"]
+        for row in conn.execute(
+            """SELECT COALESCE(NULLIF(orphan_status,''), 'unknown') AS orphan_status,
+                      COUNT(*) AS n
+               FROM content_nodes GROUP BY orphan_status ORDER BY n DESC"""
+        )
+    }
+    orphan_analysis["orphan_percent"] = round(
+        100.0 * orphan_analysis.get("orphan", 0) / total, 1
+    ) if total else 0.0
+
+    conn.close()
+    return {
+        "total_pages": total,
+        "active_pages": active,
+        "content_types": content_types,
+        "industries": industries,
+        "countries": countries,
+        "link_distribution": link_distribution,
+        "orphan_analysis": orphan_analysis,
+    }
+
+
 # ── 3. List all pages (paginated) ────────────────────────────────────────────
 
 @app.get("/api/pages")
@@ -73,20 +159,25 @@ def list_pages(
     industry: Optional[str] = Query(None, description="Filter by industry"),
     country: Optional[str] = Query(None, description="Filter by country"),
     content_type: Optional[str] = Query(None, description="Filter by content type"),
+    search: Optional[str] = Query(None, description="Search term matched against URL and title"),
 ):
     conn = get_db()
     where_clauses = []
     params: list = []
 
     if industry:
-        where_clauses.append("industry = ?")
+        where_clauses.append("LOWER(industry) = LOWER(?)")
         params.append(industry)
     if country:
-        where_clauses.append("country = ?")
+        where_clauses.append("LOWER(country) = LOWER(?)")
         params.append(country)
     if content_type:
-        where_clauses.append("content_type = ?")
+        where_clauses.append("LOWER(content_type) = LOWER(?)")
         params.append(content_type)
+    if search:
+        where_clauses.append("(url LIKE ? OR title LIKE ?)")
+        term = f"%{search}%"
+        params.extend([term, term])
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 

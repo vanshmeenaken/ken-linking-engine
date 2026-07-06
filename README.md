@@ -179,7 +179,8 @@ python api/main.py
 # or: python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
 
-Then open the interactive Swagger UI at **http://localhost:8000/docs**.
+Then open the interactive Swagger UI at **http://localhost:8000/docs**, or the
+human-readable visual dashboard at **http://localhost:8000/dashboard**.
 
 ### Endpoints
 
@@ -187,12 +188,14 @@ Then open the interactive Swagger UI at **http://localhost:8000/docs**.
 |--------|------|---------|
 | GET | `/` | Health check |
 | GET | `/api/stats` | Overall metrics (totals, orphans, avg scores) |
-| GET | `/api/pages` | List pages (paginated: `skip`, `limit`, filters) |
+| GET | `/api/metrics` | Detailed breakdown (content types, industries, countries, link distribution, orphan analysis) |
+| GET | `/api/pages` | List pages (paginated: `skip`, `limit`, filters incl. `search`) |
 | GET | `/api/pages/orphans` | Orphan pages (0 incoming links) |
 | GET | `/api/pages/{node_id}` | Single page detail (by node_id or URL fragment) |
 | GET | `/api/taxonomy/industries` | Unique industries + counts (filter dropdown) |
 | GET | `/api/taxonomy/countries` | Unique countries + counts (filter dropdown) |
 | GET | `/docs` | Swagger UI (auto-generated) |
+| GET | `/dashboard` | Visual dashboard — cards, charts, searchable table, no raw JSON |
 
 Full request/response examples: **[docs/API.md](docs/API.md)**.
 

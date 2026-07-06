@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ken Intelligence Linking Engine — Dashboard</title>
+<style>
+  :root {
+    --blue: #1a56db;
+    --blue-light: #eaf1fd;
+    --green: #0f9d58;
+    --green-light: #e8f8ee;
+    --orange: #e08e0b;
+    --orange-light: #fdf3e0;
+    --red: #d93025;
+    --red-light: #fce8e6;
+    --gray: #6b7280;
+    --border: #e5e7eb;
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --text: #1f2430;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  header h1 { font-size: 20px; margin: 0; }
+  header p { margin: 2px 0 0; color: var(--gray); font-size: 13px; }
+  .refresh-btn {
+    background: var(--blue);
+    color: white;
+    border: none;
+    padding: 9px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .refresh-btn:hover { background: #1447b8; }
+  main { padding: 24px 28px 60px; max-width: 1400px; margin: 0 auto; }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .stat-card .label { font-size: 13px; color: var(--gray); margin-bottom: 6px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; }
+  .stat-card .sub { font-size: 12px; color: var(--gray); margin-top: 4px; }
+  .stat-card.orphan .value { color: var(--red); }
+  .stat-card.good .value { color: var(--green); }
+
+  .panel-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 800px) { .panel-row { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .panel h2 { font-size: 15px; margin: 0 0 14px; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
+  .bar-row .name { width: 190px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .bar-track { flex: 1; background: #eef0f3; border-radius: 6px; height: 10px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--blue); border-radius: 6px; }
+  .bar-row .count { width: 40px; text-align: right; color: var(--gray); flex-shrink: 0; }
+
+  .status-pills { display: flex; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    flex: 1;
+    min-width: 120px;
+    text-align: center;
+  }
+  .pill .n { font-size: 22px; display: block; margin-bottom: 2px; }
+  .pill.orphan { background: var(--red-light); color: var(--red); }
+  .pill.few { background: var(--orange-light); color: var(--orange); }
+  .pill.good { background: var(--blue-light); color: var(--blue); }
+  .pill.well { background: var(--green-light); color: var(--green); }
+
+  .table-panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .table-panel h2 { font-size: 15px; margin: 0 0 16px; }
+  .filters {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .filters input, .filters select {
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    background: white;
+    color: var(--text);
+  }
+  .filters input[type="text"] { min-width: 220px; flex: 1; }
+  .filters select { min-width: 160px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 2px solid var(--border);
+    color: var(--gray);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tbody tr:hover { background: #fafbfc; }
+  .page-title { font-weight: 600; }
+  .page-title a { color: var(--text); text-decoration: none; }
+  .page-title a:hover { color: var(--blue); text-decoration: underline; }
+  .page-url { font-size: 11px; color: var(--gray); margin-top: 2px; }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge.orphan { background: var(--red-light); color: var(--red); }
+  .badge.under_linked { background: var(--orange-light); color: var(--orange); }
+  .badge.normal { background: var(--blue-light); color: var(--blue); }
+  .badge.well_linked { background: var(--green-light); color: var(--green); }
+  .badge.removed { background: #eceef1; color: var(--gray); }
+
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--gray);
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .pagination .controls { display: flex; gap: 8px; align-items: center; }
+  .pagination button {
+    padding: 7px 14px;
+    border: 1px solid var(--border);
+    background: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .pagination button:not(:disabled):hover { background: var(--blue-light); border-color: var(--blue); }
+
+  .empty-msg { padding: 30px; text-align: center; color: var(--gray); }
+  .loading { padding: 30px; text-align: center; color: var(--gray); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Ken Intelligence Linking Engine</h1>
+    <p>Phase 1 — Content Inventory Dashboard · <span id="last-updated">loading…</span></p>
+  </div>
+  <button class="refresh-btn" onclick="loadEverything()">Refresh Data</button>
+</header>
+
+<main>
+
+  <div class="stat-grid" id="stat-grid">
+    <div class="loading">Loading summary…</div>
+  </div>
+
+  <div class="panel-row">
+    <div class="panel">
+      <h2>Pages by Industry</h2>
+      <div id="industry-bars"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="panel">
+      <h2>Pages by Country (Top 10)</h2>
+      <div id="country-bars"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:24px;">
+    <h2>Link Health — How Well Connected Are Our Pages?</h2>
+    <div class="status-pills" id="status-pills">
+      <div class="loading">Loading…</div>
+    </div>
+  </div>
+
+  <div class="table-panel">
+    <h2>All Pages</h2>
+    <div class="filters">
+      <input type="text" id="f-search" placeholder="Search by title or URL..." />
+      <select id="f-industry"><option value="">All Industries</option></select>
+      <select id="f-country"><option value="">All Countries</option></select>
+      <select id="f-type">
+        <option value="">All Content Types</option>
+        <option value="report">Report</option>
+        <option value="article">Article</option>
+        <option value="case_study">Case Study</option>
+      </select>
+      <select id="f-status">
+        <option value="">Any Link Status</option>
+        <option value="orphan">No Links Found</option>
+        <option value="under_linked">Few Links</option>
+        <option value="normal">Good</option>
+        <option value="well_linked">Well Linked</option>
+        <option value="removed">Removed / Redirected</option>
+      </select>
+    </div>
+
+    <div id="table-wrap">
+      <div class="loading">Loading pages…</div>
+    </div>
+
+    <div class="pagination">
+      <div id="page-info">—</div>
+      <div class="controls">
+        <label style="margin-right:8px;">Rows per page:
+          <select id="page-size">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+        <button id="prev-btn" onclick="changePage(-1)">← Previous</button>
+        <button id="next-btn" onclick="changePage(1)">Next →</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const API = "";
+let state = { skip: 0, limit: 50, total: 0 };
+const statusLabels = {
+  orphan: "No Links Found",
+  under_linked: "Few Links",
+  normal: "Good",
+  well_linked: "Well Linked",
+  removed: "Removed / Redirected",
+};
+
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+  return res.json();
+}
+
+function fmt(n) {
+  return n === null || n === undefined ? "—" : n.toLocaleString();
+}
+
+async function loadStats() {
+  const [stats, metrics] = await Promise.all([
+    getJSON(`${API}/api/stats`),
+    getJSON(`${API}/api/metrics`),
+  ]);
+
+  const orphanPct = metrics.orphan_analysis.orphan_percent;
+  document.getElementById("stat-grid").innerHTML = `
+    <div class="stat-card">
+      <div class="label">Total Pages</div>
+      <div class="value">${fmt(stats.total_pages)}</div>
+      <div class="sub">${fmt(stats.active_pages)} active</div>
+    </div>
+    <div class="stat-card orphan">
+      <div class="label">Pages Needing Links</div>
+      <div class="value">${fmt(stats.orphan_pages)}</div>
+      <div class="sub">${orphanPct}% of all pages</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Average Incoming Links</div>
+      <div class="value">${stats.avg_links_in}</div>
+      <div class="sub">per page, sitewide evidence</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Average Outgoing Links</div>
+      <div class="value">${metrics.link_distribution.internal_links_out.avg}</div>
+      <div class="sub">real content links only</div>
+    </div>
+    <div class="stat-card good">
+      <div class="label">Average Authority Score</div>
+      <div class="value">${stats.avg_authority_score}</div>
+      <div class="sub">out of 100</div>
+    </div>
+  `;
+
+  const maxIndustry = Math.max(...Object.values(metrics.industries));
+  document.getElementById("industry-bars").innerHTML = Object.entries(metrics.industries)
+    .slice(0, 10)
+    .map(([name, count]) => `
+      <div class="bar-row">
+        <div class="name" title="${name}">${name}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(count / maxIndustry * 100).toFixed(0)}%"></div></div>
+        <div class="count">${count}</div>
+      </div>
+    `).join("");
+
+  const topCountries = Object.entries(metrics.countries).slice(0, 10);
+  const maxCountry = Math.max(...topCountries.map(([, c]) => c));
+  document.getElementById("country-bars").innerHTML = topCountries
+    .map(([name, count]) => `
+      <div class="bar-row">
+        <div class="name" title="${name}">${name}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(count / maxCountry * 100).toFixed(0)}%; background:var(--green);"></div></div>
+        <div class="count">${count}</div>
+      </div>
+    `).join("");
+
+  const oa = metrics.orphan_analysis;
+  document.getElementById("status-pills").innerHTML = `
+    <div class="pill orphan"><span class="n">${fmt(oa.orphan || 0)}</span>No Links Found</div>
+    <div class="pill few"><span class="n">${fmt(oa.under_linked || 0)}</span>Few Links (1-2)</div>
+    <div class="pill good"><span class="n">${fmt(oa.normal || 0)}</span>Good (3-5)</div>
+    <div class="pill well"><span class="n">${fmt(oa.well_linked || 0)}</span>Well Linked (6+)</div>
+  `;
+
+  document.getElementById("last-updated").textContent =
+    "Last updated " + new Date().toLocaleTimeString();
+}
+
+async function loadFilterOptions() {
+  const [industries, countries] = await Promise.all([
+    getJSON(`${API}/api/taxonomy/industries`),
+    getJSON(`${API}/api/taxonomy/countries`),
+  ]);
+  const indSel = document.getElementById("f-industry");
+  industries.industries.forEach(i => {
+    const opt = document.createElement("option");
+    opt.value = i.name;
+    opt.textContent = `${i.name} (${i.page_count})`;
+    indSel.appendChild(opt);
+  });
+  const ctySel = document.getElementById("f-country");
+  countries.countries.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c.name;
+    opt.textContent = `${c.name} (${c.page_count})`;
+    ctySel.appendChild(opt);
+  });
+}
+
+function buildQuery() {
+  const params = new URLSearchParams();
+  params.set("skip", state.skip);
+  params.set("limit", state.limit);
+  const search = document.getElementById("f-search").value.trim();
+  const industry = document.getElementById("f-industry").value;
+  const country = document.getElementById("f-country").value;
+  const type = document.getElementById("f-type").value;
+  if (search) params.set("search", search);
+  if (industry) params.set("industry", industry);
+  if (country) params.set("country", country);
+  if (type) params.set("content_type", type);
+  return params.toString();
+}
+
+async function loadPages() {
+  document.getElementById("table-wrap").innerHTML = `<div class="loading">Loading pages…</div>`;
+  const data = await getJSON(`${API}/api/pages?${buildQuery()}`);
+  state.total = data.total;
+
+  const statusFilter = document.getElementById("f-status").value;
+  let rows = data.pages;
+  if (statusFilter) rows = rows.filter(r => r.orphan_status === statusFilter);
+
+  if (rows.length === 0) {
+    document.getElementById("table-wrap").innerHTML = `<div class="empty-msg">No pages match these filters.</div>`;
+  } else {
+    document.getElementById("table-wrap").innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Page</th>
+            <th>Type</th>
+            <th>Industry</th>
+            <th>Country</th>
+            <th>Links In</th>
+            <th>Links Out</th>
+            <th>Link Status</th>
+            <th>Authority Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td>
+                <div class="page-title"><a href="${r.url}" target="_blank" rel="noopener">${r.title || "(untitled)"}</a></div>
+                <div class="page-url">${r.url}</div>
+              </td>
+              <td>${r.content_type || "—"}</td>
+              <td>${r.industry || "—"}</td>
+              <td>${r.country || "—"}</td>
+              <td>${fmt(r.internal_links_in)}</td>
+              <td>${fmt(r.internal_links_out)}</td>
+              <td><span class="badge ${r.orphan_status || ''}">${statusLabels[r.orphan_status] || r.orphan_status || "—"}</span></td>
+              <td>${r.page_authority_score ?? "—"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  const from = state.total === 0 ? 0 : state.skip + 1;
+  const to = Math.min(state.skip + state.limit, state.total);
+  document.getElementById("page-info").textContent =
+    `Showing ${from}–${to} of ${state.total} pages`;
+  document.getElementById("prev-btn").disabled = state.skip === 0;
+  document.getElementById("next-btn").disabled = to >= state.total;
+}
+
+function changePage(direction) {
+  state.skip = Math.max(0, state.skip + direction * state.limit);
+  loadPages();
+}
+
+function resetAndReload() {
+  state.skip = 0;
+  loadPages();
+}
+
+let searchDebounce;
+document.getElementById("f-search").addEventListener("input", () => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(resetAndReload, 350);
+});
+document.getElementById("f-industry").addEventListener("change", resetAndReload);
+document.getElementById("f-country").addEventListener("change", resetAndReload);
+document.getElementById("f-type").addEventListener("change", resetAndReload);
+document.getElementById("f-status").addEventListener("change", resetAndReload);
+document.getElementById("page-size").addEventListener("change", (e) => {
+  state.limit = parseInt(e.target.value, 10);
+  state.skip = 0;
+  loadPages();
+});
+
+async function loadEverything() {
+  await Promise.all([loadStats(), loadPages()]);
+}
+
+(async function init() {
+  await loadFilterOptions();
+  await loadEverything();
+})();
+</script>
+
+</body>
+</html>
