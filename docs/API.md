@@ -73,7 +73,7 @@ curl http://localhost:8000/api/stats
   "active_pages": 498,
   "orphan_pages": 354,
   "avg_links_in": 2.0,
-  "avg_authority_score": 11.53,
+  "avg_authority_score": 14.21,
   "response_time_ms": 8.3
 }
 ```

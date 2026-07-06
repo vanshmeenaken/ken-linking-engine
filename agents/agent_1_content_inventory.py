@@ -576,14 +576,19 @@ class ContentInventoryAgent:
                         default=0,
                     )
                     result.orphan_status = determine_orphan_status(result.internal_links_in)
-        calculate_authority_scores(results)
         for result in results:
             if result.status == "removed":
                 # Discontinued page redirecting to a generic hub: no real
                 # link signal of its own, regardless of what the snapshot
-                # or authority formula computed from its (self) alias.
+                # computed from its (self) alias. Must be zeroed BEFORE
+                # authority scoring, or its inherited hub count pollutes the
+                # batch max and deflates every other page's score.
                 result.internal_links_in = 0
+                result.internal_links_out = 0
                 result.orphan_status = "removed"
+        calculate_authority_scores(results)
+        for result in results:
+            if result.status == "removed":
                 result.page_authority_score = 0.0
         elapsed = round(time.perf_counter() - started, 2)
         summary = self._summary(results, elapsed, dry_run)

@@ -172,3 +172,33 @@ counts), the API layer is fast, stable under concurrent load, and resistant
 to injection attempts. One recurring data-quality bug (report-store link
 inheritance) was found and permanently fixed at the code level during this
 test — exactly the kind of defect integration testing exists to catch.
+
+---
+
+## Addendum — Post-Test Review Findings (July 7)
+
+An independent review pass over the Day 8–10 diff found one flaw in the Day 8
+fix itself, plus one hygiene issue:
+
+**1. Authority-score deflation (real bug, fixed).** The hub-redirect fix
+zeroed the removed pages' inherited link counts *after*
+`calculate_authority_scores()` ran, not before. The scoring formula
+normalizes every page against the batch maximum incoming count — so the
+removed pages' fake 4,804 was still the max at scoring time, silently
+deflating all 498 active pages' scores by ~40% (top page scored 66.04
+instead of 96.93). Fixed by zeroing removed pages' link counts *before*
+scoring; verified corrected values in the database afterwards.
+
+**2. CSV quoting (hygiene, fixed).** The case-study row appended to
+`scripts/sample_urls.csv` during Day 8 avoided a comma in the industry name
+rather than quoting it. Now correctly written as
+`"Metal, Mining and Chemicals"`; re-verified the CSV parses to exactly 500
+rows.
+
+**External note:** during the post-fix re-run, all 60 `/industry-reports/*`
+URLs failed with HTTP 500 — Ken's server began erroring on that entire site
+section that evening (confirmed directly: those URLs 500 while others 200;
+they crawled fine hours earlier). Their stored link counts from the last
+successful crawl remain valid; their authority scores were recomputed
+consistently from stored data using the identical formula. Re-running Agent 1
+after Ken's section recovers will converge to the same values.
