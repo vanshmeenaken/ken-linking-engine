@@ -30,6 +30,8 @@ def normalize_url(u):
 
 
 def global_or_local(country):
+    """Classify a country string as 'global' (region/global-level) or 'local'
+    (a specific country), or '' if country is blank."""
     c = (country or "").strip().lower()
     region_like = {"global", "apac", "asia pacific", "europe", "north america",
                    "latin america", "middle east", "mea", "mena", "gcc", "africa"}
@@ -39,6 +41,9 @@ def global_or_local(country):
 
 
 def main():
+    """Load URLs from a CSV into content_nodes, skipping duplicates and bad
+    rows. Exits with an error if the CSV or database file doesn't exist, or
+    if the load leaves any duplicate URLs behind."""
     csv_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CSV
     if not os.path.exists(csv_path):
         raise SystemExit(f"CSV not found: {csv_path}")

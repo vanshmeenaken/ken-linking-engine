@@ -9,6 +9,7 @@ Base = declarative_base()
 
 
 def get_session():
+    """Yield a SQLAlchemy session, closing it automatically when done."""
     session = SessionLocal()
     try:
         yield session

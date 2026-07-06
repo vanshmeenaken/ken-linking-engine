@@ -92,10 +92,17 @@ UTILITY_PATH_PREFIXES = (
     "/terms-and-conditions",
     "/privacy-policy",
 )
+# Generic hub pages a discontinued report redirects to. Such a hub is linked
+# from every page's menu, so a page that lands here after a redirect must not
+# inherit the hub's own sitewide incoming-link count as if it were its own.
+HUB_REDIRECT_PATHS = {"/report-store", "/", ""}
 
 
 @dataclass
 class PageResult:
+    """Everything Agent 1 learns about one URL from a single live crawl:
+    metadata, classification, link counts, and any error encountered."""
+
     node_id: str
     requested_url: str
     final_url: str = ""
@@ -111,6 +118,7 @@ class PageResult:
     orphan_status: str = ""
     industry: str = ""
     page_authority_score: float = 0.0
+    status: str = "active"
     http_status: int | None = None
     elapsed_ms: float = 0.0
     error: str = ""
@@ -118,6 +126,7 @@ class PageResult:
 
     @property
     def succeeded(self) -> bool:
+        """True if the crawl completed without error and got an HTTP response."""
         return not self.error and self.http_status is not None
 
 
@@ -335,6 +344,8 @@ def classify_content_type(
 
 
 def determine_orphan_status(incoming_links: int) -> str:
+    """Classify a page by incoming link count: 0 -> orphan, 1-2 -> under_linked,
+    3-5 -> normal, 6+ -> well_linked."""
     if incoming_links <= 0:
         return "orphan"
     if incoming_links <= 2:
@@ -364,7 +375,14 @@ def calculate_authority_scores(results: list[PageResult]) -> None:
 
 
 class ContentInventoryAgent:
+    """Crawls every URL in content_nodes and enriches it with title, H1,
+    classification, canonical URL, link counts, orphan status, and authority
+    score. See docs/ARCHITECTURE.md for the full pipeline this fits into."""
+
     def __init__(self, db_path=DEFAULT_DB, workers=20, timeout=12.0, logger=None):
+        """db_path: sqlite file to read/write. workers: concurrent crawl
+        threads (5 is the tested-safe value against Ken's rate limiting).
+        timeout: per-request seconds."""
         self.db_path = Path(db_path)
         self.workers = max(1, workers)
         self.timeout = timeout
@@ -372,6 +390,7 @@ class ContentInventoryAgent:
 
     @staticmethod
     def _session() -> requests.Session:
+        """Build a requests.Session with a browser User-Agent for crawling."""
         session = requests.Session()
         retry = Retry(
             total=2, connect=2, read=2, backoff_factor=0.35,
@@ -389,6 +408,8 @@ class ContentInventoryAgent:
         return session
 
     def load_nodes(self, limit: int | None = None) -> list[dict[str, str]]:
+        """Read node_id/url/content_type for every row in content_nodes
+        (read-only connection), optionally capped at `limit` rows."""
         conn = sqlite3.connect(f"file:{self.db_path.resolve()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
@@ -405,6 +426,10 @@ class ContentInventoryAgent:
             conn.close()
 
     def process_url(self, node: dict[str, str]) -> PageResult:
+        """Crawl one URL live and extract everything for its PageResult:
+        title, H1, meta, canonical, content type, industry, hub-redirect
+        detection, and outbound content links. Never raises — any failure is
+        captured in result.error instead."""
         started = time.perf_counter()
         requested = normalize_url(node["url"])
         result = PageResult(node_id=node["node_id"], requested_url=requested)
@@ -445,13 +470,24 @@ class ContentInventoryAgent:
                 normalize_url(canonical.get("href", ""), result.final_url)
                 if canonical else ""
             ) or result.final_url or requested
+            landed_path = urlsplit(result.final_url or requested).path.rstrip("/")
+            requested_path = urlsplit(requested).path.rstrip("/")
+            is_hub_redirect = landed_path in HUB_REDIRECT_PATHS and landed_path != requested_path
+            if is_hub_redirect:
+                # Report was discontinued and now redirects to a generic hub
+                # page. Keep the alias scoped to this URL itself so it never
+                # inherits the hub's own sitewide incoming-link count.
+                result.status = "removed"
+                result.canonical_url = requested
             robots = " ".join(
                 tag.get("content", "").lower()
                 for tag in soup.find_all(
                     "meta", attrs={"name": lambda value: value and value.lower() in {"robots", "googlebot"}}
                 )
             )
-            if response.status_code >= 400:
+            if is_hub_redirect:
+                result.indexability_status = "redirected_removed"
+            elif response.status_code >= 400:
                 result.indexability_status = f"http_{response.status_code}"
             elif "noindex" in robots:
                 result.indexability_status = "noindex"
@@ -489,6 +525,10 @@ class ContentInventoryAgent:
         return result
 
     def process_all_urls(self, limit=None, dry_run=False, incoming_snapshot=None):
+        """Crawl every node concurrently, compute incoming links (scoped to
+        this batch, or from a sitewide `incoming_snapshot` JSON file if
+        given), calculate authority scores, and write results to the
+        database unless dry_run is True. Returns (results, summary dict)."""
         nodes = self.load_nodes(limit)
         total = len(nodes)
         if not total:
@@ -537,6 +577,14 @@ class ContentInventoryAgent:
                     )
                     result.orphan_status = determine_orphan_status(result.internal_links_in)
         calculate_authority_scores(results)
+        for result in results:
+            if result.status == "removed":
+                # Discontinued page redirecting to a generic hub: no real
+                # link signal of its own, regardless of what the snapshot
+                # or authority formula computed from its (self) alias.
+                result.internal_links_in = 0
+                result.orphan_status = "removed"
+                result.page_authority_score = 0.0
         elapsed = round(time.perf_counter() - started, 2)
         summary = self._summary(results, elapsed, dry_run)
         if incoming_snapshot:
@@ -553,6 +601,9 @@ class ContentInventoryAgent:
         return results, summary
 
     def update_database(self, results: list[PageResult]) -> None:
+        """Write all successful results to content_nodes in a single
+        transaction, and log each one in crawl_logs. Raises if there are no
+        successful results at all — never leaves the database half-written."""
         successful = [result for result in results if result.succeeded]
         if not successful:
             raise RuntimeError("No successful results; database not updated")
@@ -569,14 +620,14 @@ class ContentInventoryAgent:
                     industry=CASE WHEN ? != '' THEN ? ELSE industry END,
                     indexability_status=?, crawl_depth=?, internal_links_in=?,
                     internal_links_out=?, orphan_status=?, page_authority_score=?,
-                    updated_at=? WHERE node_id=?""",
+                    status=?, updated_at=? WHERE node_id=?""",
                     (result.canonical_url, result.title, result.title,
                      result.meta_description, result.h1, result.content_type,
                      result.industry, result.industry,
                      result.indexability_status, result.crawl_depth,
                      result.internal_links_in, result.internal_links_out,
                      result.orphan_status, result.page_authority_score,
-                     timestamp, result.node_id),
+                     result.status, timestamp, result.node_id),
                 )
                 conn.execute(
                     """INSERT INTO crawl_logs
@@ -634,6 +685,9 @@ class ContentInventoryAgent:
 
     @staticmethod
     def _summary(results, elapsed, dry_run):
+        """Build the run summary dict: counts by success/type/link-status,
+        averages, failed URLs with their errors, and the methodology notes
+        written into every report."""
         successful = [result for result in results if result.succeeded]
         failed = [result for result in results if not result.succeeded]
         types, statuses = {}, {}
@@ -661,6 +715,7 @@ class ContentInventoryAgent:
 
 
 def configure_logging():
+    """Set up a file logger at logs/content_inventory_agent.log and return it."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("content_inventory_agent")
     logger.setLevel(logging.INFO)
@@ -672,6 +727,8 @@ def configure_logging():
 
 
 def write_report(results, summary, output: Path):
+    """Write the full run (summary + every page's result, minus the raw
+    outbound_urls list) to a JSON file at `output`."""
     output.parent.mkdir(parents=True, exist_ok=True)
     pages = []
     for result in results:
@@ -685,6 +742,8 @@ def write_report(results, summary, output: Path):
 
 
 def parse_args(argv=None):
+    """Parse CLI arguments for the agent (--limit, --dry-run, --workers,
+    --timeout, --db, --report, --incoming-snapshot, --apply-report)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--dry-run", action="store_true")
@@ -701,6 +760,8 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
+    """CLI entry point: run the agent (or apply a cached report), print a
+    summary to stdout, and write the full JSON report to disk."""
     args = parse_args(argv)
     agent = ContentInventoryAgent(args.db, args.workers, args.timeout, configure_logging())
     report = Path(args.report) if args.report else REPORT_DIR / f"content_inventory_{datetime.now():%Y%m%d_%H%M%S}.json"

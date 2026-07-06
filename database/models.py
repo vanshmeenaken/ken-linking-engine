@@ -8,6 +8,9 @@ from database.db import Base
 
 
 class ContentNode(Base):
+    """One row per Ken Research page: metadata, classification, link counts,
+    and scores. The core table populated by Agent 1 (Phase 1)."""
+
     __tablename__ = "content_nodes"
 
     node_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -47,6 +50,9 @@ class ContentNode(Base):
 
 
 class ContentEntity(Base):
+    """An extracted entity (market, industry, country, company, etc.).
+    Schema only in Phase 1 — populated by Agent 2 (Entity Extraction), Phase 2."""
+
     __tablename__ = "content_entities"
 
     entity_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -66,6 +72,9 @@ class ContentEntity(Base):
 
 
 class RelationshipEdge(Base):
+    """A typed, scored relationship between two content nodes (or entities).
+    Schema only in Phase 1 — populated by Agent 3 (Relationship Mapping), Phase 2."""
+
     __tablename__ = "relationship_edges"
 
     edge_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -95,6 +104,8 @@ class RelationshipEdge(Base):
 
 
 class CrawlLog(Base):
+    """Audit trail of every load/enrichment operation run against a URL."""
+
     __tablename__ = "crawl_logs"
 
     crawl_id = Column(Integer, primary_key=True, autoincrement=True)

@@ -20,6 +20,7 @@ app = FastAPI(
 
 
 def get_db():
+    """Open a new sqlite3 connection to ken_links.db with row-as-dict access."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -29,6 +30,7 @@ def get_db():
 
 @app.get("/")
 def root():
+    """Health check — confirms the API process is up and reachable."""
     return {"status": "ok", "message": "Ken Intelligence Linking Engine Phase 1"}
 
 
@@ -36,6 +38,7 @@ def root():
 
 @app.get("/dashboard")
 def dashboard():
+    """Serve the self-contained visual dashboard (dashboard/index.html)."""
     return FileResponse(DASHBOARD_PATH)
 
 
@@ -43,6 +46,7 @@ def dashboard():
 
 @app.get("/api/stats")
 def get_stats():
+    """Return top-level summary metrics: totals, orphan count, link/authority averages."""
     start = time.time()
     conn = get_db()
 
@@ -76,6 +80,8 @@ def get_stats():
 
 @app.get("/api/metrics")
 def get_metrics():
+    """Return the full database breakdown: content types, industries, countries,
+    incoming/outgoing link distribution, and orphan-status analysis."""
     conn = get_db()
 
     total = conn.execute("SELECT COUNT(*) FROM content_nodes").fetchone()[0]
@@ -161,6 +167,9 @@ def list_pages(
     content_type: Optional[str] = Query(None, description="Filter by content type"),
     search: Optional[str] = Query(None, description="Search term matched against URL and title"),
 ):
+    """List pages, paginated and optionally filtered by industry, country,
+    content_type (all case-insensitive exact match) and/or a search substring
+    matched against URL and title. Ordered by page_authority_score descending."""
     conn = get_db()
     where_clauses = []
     params: list = []
@@ -211,6 +220,9 @@ def list_pages(
 def get_orphans(
     limit: int = Query(100, ge=1, le=500, description="Max orphan pages to return"),
 ):
+    """List pages with zero incoming internal links, highest authority first.
+    Registered before /api/pages/{node_id} so the literal path 'orphans' is
+    never mistaken for a page ID."""
     conn = get_db()
     rows = conn.execute(
         """SELECT node_id, url, title, content_type, industry, country,
@@ -229,6 +241,8 @@ def get_orphans(
 
 @app.get("/api/pages/{node_id}")
 def get_page(node_id: str):
+    """Return full details for one page, looked up by node_id; falls back to
+    a partial URL match so a slug/fragment also works. Raises 404 if neither matches."""
     conn = get_db()
     row = conn.execute(
         "SELECT * FROM content_nodes WHERE node_id = ?", (node_id,)
@@ -248,6 +262,8 @@ def get_page(node_id: str):
 
 @app.get("/api/taxonomy/industries")
 def get_industries():
+    """Return every distinct industry with its page count, ordered highest first.
+    Used to populate dashboard filter dropdowns."""
     conn = get_db()
     rows = conn.execute(
         """SELECT industry, COUNT(*) as page_count
@@ -267,6 +283,8 @@ def get_industries():
 
 @app.get("/api/taxonomy/countries")
 def get_countries():
+    """Return every distinct country with its page count, ordered highest first.
+    Used to populate dashboard filter dropdowns."""
     conn = get_db()
     rows = conn.execute(
         """SELECT country, COUNT(*) as page_count

@@ -37,11 +37,15 @@ _local = threading.local()
 
 
 def normalize_url(url: str) -> str:
+    """Normalize a URL using Agent 1's canonical normalize_url, so alias
+    matching stays consistent across both scripts."""
     from agents.agent_1_content_inventory import normalize_url as normalize
     return normalize(url)
 
 
 def session() -> requests.Session:
+    """Return a thread-local requests.Session with retry/backoff configured,
+    creating one on first use per thread."""
     if not hasattr(_local, "session"):
         value = requests.Session()
         retry = Retry(
@@ -60,11 +64,14 @@ def session() -> requests.Session:
 
 
 def xml_locations(content: bytes) -> list[str]:
+    """Extract every <loc> URL from a sitemap XML document's bytes."""
     root = ET.fromstring(content)
     return [node.text.strip() for node in root.findall(".//{*}loc") if node.text]
 
 
 def sitemap_urls(timeout: float) -> tuple[list[str], list[str]]:
+    """Fetch the sitemap index, then every listed sitemap, returning
+    (sitemap URLs, deduplicated normalized page URLs)."""
     index = session().get(SITEMAP_INDEX, timeout=timeout)
     index.raise_for_status()
     sitemaps = xml_locations(index.content)
@@ -78,6 +85,8 @@ def sitemap_urls(timeout: float) -> tuple[list[str], list[str]]:
 
 
 def inventory_targets(db_path: Path) -> set[str]:
+    """Return the set of normalized URLs (and canonical aliases) we're
+    counting incoming links for — every URL currently in content_nodes."""
     conn = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)
     try:
         targets = set()
@@ -93,6 +102,10 @@ def inventory_targets(db_path: Path) -> set[str]:
 
 
 def collect_source(source_url: str, targets: set[str], timeout: float):
+    """Crawl one live sitewide page and return which of our target URLs it
+    links to. Returns (source_url, matched target URLs, error string or '',
+    elapsed seconds). A 404/410 is treated as confirmed evidence (no links),
+    not a failure."""
     started = time.perf_counter()
     try:
         response = session().get(source_url, timeout=(5.0, timeout))
@@ -119,6 +132,9 @@ def collect_source(source_url: str, targets: set[str], timeout: float):
 
 
 def main():
+    """Crawl the full kenresearch.com sitemap (or retry failures from a prior
+    snapshot), count real incoming links to every content_nodes URL, and
+    write the result to a JSON snapshot file. Does not modify the database."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=str(ROOT / "ken_links.db"))
     parser.add_argument("--workers", type=int, default=40)

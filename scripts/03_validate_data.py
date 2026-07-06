@@ -25,18 +25,24 @@ DB_PATH = os.path.join(ROOT, "ken_links.db")
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def pct(count, total):
+    """Format count/total as a percentage string, e.g. '95.0%'."""
     return f"{(count / total * 100):.1f}%" if total else "0.0%"
 
 def bar(count, total, width=20):
+    """Render count/total as a fixed-width ASCII progress bar."""
     filled = int(count / total * width) if total else 0
     return "#" * filled + "-" * (width - filled)
 
 def top_n(counter, n=10):
+    """Return the n most common items from a Counter."""
     return counter.most_common(n)
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    """Run the full data quality report against ken_links.db and print it,
+    including the final weighted quality score (critical fields 80%,
+    optional fields 20%, minus a duplicate-URL penalty)."""
     if not os.path.exists(DB_PATH):
         raise SystemExit(f"DB not found: {DB_PATH}")
 

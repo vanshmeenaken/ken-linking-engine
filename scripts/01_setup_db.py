@@ -9,6 +9,8 @@ from database import models  # noqa: F401  (registers models with Base)
 
 
 def main():
+    """Create ken_links.db and all 4 tables if they don't already exist.
+    Non-destructive: safe to re-run against an existing database."""
     Base.metadata.create_all(engine)
     tables = list(Base.metadata.tables.keys())
     print(f"Database ready with {len(tables)} tables: {', '.join(tables)}")
