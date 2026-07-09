@@ -396,11 +396,13 @@ class RelationshipMappingAgent:
 
     def run(self, limit=None, dry_run=False):
         started = time.perf_counter()
+        self._stale_removed = 0
         result = self.build_edges(limit)
         elapsed = round(time.perf_counter() - started, 2)
         summary = self._summary(result, elapsed, dry_run)
         if not dry_run:
             self._write_database(result.edges)
+        summary["stale_edges_removed"] = self._stale_removed
         return result, summary
 
     def _write_database(self, edges: list[Edge]) -> None:
@@ -435,15 +437,42 @@ class RelationshipMappingAgent:
                      e.geo_match_score, e.market_match_score, now, now),
                 )
                 written += 1
+
+            # Remove stale edges: ones this agent created on a previous run
+            # that its current logic no longer produces (e.g. an edge built
+            # when a page had a different, since-corrected industry). Without
+            # this, re-running after source-data changes leaves orphaned edges
+            # in the table (verified: an industry-cleanup re-run left 94 stale
+            # edges). Only 'pending' agent_3 edges are eligible — anything a
+            # human has reviewed (approved/rejected/corrected) is preserved.
+            current_keys = {
+                (e.source_node_id, e.target_node_id, e.relationship_type)
+                for e in edges
+            }
+            stale = [
+                row[0] for row in conn.execute(
+                    "SELECT edge_id, source_node_id, target_node_id, relationship_type "
+                    "FROM relationship_edges "
+                    "WHERE created_by='agent_3' AND status='pending'"
+                )
+                if (row[1], row[2], row[3]) not in current_keys
+            ]
+            for edge_id in stale:
+                conn.execute(
+                    "DELETE FROM relationship_edges WHERE edge_id=?", (edge_id,)
+                )
+
             conn.execute(
                 """INSERT INTO entity_extraction_logs
                    (run_id, node_id, operation, status, entities_found,
                     low_confidence_count, error, notes, created_at)
                    VALUES (?,NULL,'relationship_mapping','success',?,0,NULL,?,?)""",
                 (self.run_id, written,
-                 f"Agent 3 deterministic edges: {written} written/updated", now),
+                 f"Agent 3 deterministic edges: {written} written/updated, "
+                 f"{len(stale)} stale removed", now),
             )
             conn.commit()
+            self._stale_removed = len(stale)
         except Exception:
             conn.rollback()
             raise
@@ -538,6 +567,7 @@ def main(argv=None):
     print(f"Edges created: {summary['edges_created']}")
     print(f"By type: {summary['edges_by_type']}")
     print(f"Hub markets skipped (precision guard): {summary['hub_markets_skipped']}")
+    print(f"Stale edges removed: {summary.get('stale_edges_removed', 0)}")
     print(f"Report: {report}")
     print("Database update: skipped (dry run)" if summary["dry_run"]
           else "Database update: committed")

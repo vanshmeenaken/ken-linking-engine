@@ -5,13 +5,17 @@ import time
 from dataclasses import asdict
 from typing import Optional
 
+# Must run before any project-local import (config, agents) — when this file
+# is executed directly (`python api/main.py`, not `-m`), Python only puts
+# api/'s own directory on sys.path, not the project root, so those imports
+# fail. pytest masked this bug (it sets rootdir on sys.path itself).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 
 from config.settings import API_HOST, API_PORT
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.agent_10_seo_validation import SEOValidationAgent
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

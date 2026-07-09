@@ -299,6 +299,66 @@ def test_live_run_writes_edges_and_is_idempotent(tmp_path):
     assert status == "pending"
 
 
+def test_stale_pending_edges_removed_on_rerun(tmp_path):
+    # Regression: after source data changes, a re-run must remove edges the
+    # agent created before but no longer produces (industry-cleanup re-run
+    # left 94 stale edges before this fix).
+    db = _make_db(
+        tmp_path,
+        nodes=[{"node_id": "n1"}, {"node_id": "n2"}],
+        entities=[
+            ("n1", "market", "Cold Storage Market", "primary_market"),
+            ("n2", "market", "Cold Storage Market", "primary_market"),
+        ],
+    )
+    RelationshipMappingAgent(db_path=db).run(dry_run=False)
+    # Inject a stale pending agent_3 edge that current logic won't produce
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO relationship_edges (edge_id, source_node_id, target_node_id, "
+        "relationship_type, created_by, status) VALUES "
+        "('stale-1','n1','n2','industry_market','agent_3','pending')"
+    )
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) FROM relationship_edges").fetchone()[0] == 2
+    conn.close()
+
+    _, summary = RelationshipMappingAgent(db_path=db).run(dry_run=False)
+    conn = sqlite3.connect(db)
+    remaining = {r[0] for r in conn.execute("SELECT edge_id FROM relationship_edges")}
+    conn.close()
+    assert "stale-1" not in remaining
+    assert summary["stale_edges_removed"] == 1
+
+
+def test_human_reviewed_edges_are_not_removed_as_stale(tmp_path):
+    # A stale edge a human APPROVED (or rejected) must be preserved — only
+    # untouched 'pending' agent edges are cleanup-eligible.
+    db = _make_db(
+        tmp_path,
+        nodes=[{"node_id": "n1"}, {"node_id": "n2"}],
+        entities=[
+            ("n1", "market", "Cold Storage Market", "primary_market"),
+            ("n2", "market", "Cold Storage Market", "primary_market"),
+        ],
+    )
+    RelationshipMappingAgent(db_path=db).run(dry_run=False)
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO relationship_edges (edge_id, source_node_id, target_node_id, "
+        "relationship_type, created_by, status) VALUES "
+        "('human-kept','n1','n2','industry_market','agent_3','approved')"
+    )
+    conn.commit()
+    conn.close()
+
+    RelationshipMappingAgent(db_path=db).run(dry_run=False)
+    conn = sqlite3.connect(db)
+    remaining = {r[0] for r in conn.execute("SELECT edge_id FROM relationship_edges")}
+    conn.close()
+    assert "human-kept" in remaining  # approved edge survives the re-run
+
+
 def test_edges_default_status_pending(tmp_path):
     db = _make_db(
         tmp_path,
