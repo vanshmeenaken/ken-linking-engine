@@ -50,6 +50,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from analysis.tfidf_similarity import cosine
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "ken_links.db"
 REPORT_DIR = ROOT / "reports"
@@ -65,9 +67,18 @@ CONFIDENCE = {
     "industry_market": 0.85,      # market -> parent industry, both from trusted extraction
     "report_article_support": 0.75,  # article shares market with a report
     "case_study_support": 0.75,      # case study shares market with a report
+    "adjacent_market": 0.60,         # same industry, different market, high text similarity
 }
 
 MAX_SAME_MARKET_PAGES_PER_ENTITY = 12  # precision guard: skip hub-like markets
+
+# adjacent_market tuning (Day 2). Threshold and cap chosen from dry-run
+# inspection: genuine cross-geography subject matches score ~0.30-0.40
+# (infusion pumps <-> insulin infusion pumps 0.37, cybersecurity cluster
+# 0.26-0.34); geography-only noise is same-region-different-industry and is
+# already removed by the same-industry guard.
+ADJACENT_SIMILARITY_THRESHOLD = 0.25
+MAX_ADJACENT_PER_PAGE = 5
 
 
 @dataclass
@@ -83,6 +94,9 @@ class Edge:
     reason: str
     source_entity_id: str = ""
     target_entity_id: str = ""
+    semantic_similarity_score: float | None = None
+    seo_value_score: float | None = None
+    business_value_score: float | None = None
 
 
 @dataclass
@@ -179,10 +193,129 @@ class RelationshipMappingAgent:
         result.edges.extend(self._country_region_edges(scope, node_industries))
         result.edges.extend(self._global_local_edges(scope, node_markets))
         result.edges.extend(self._industry_market_edges(node_entities))
+        result.edges.extend(self._support_edges(nodes, node_markets))
         result.edges.extend(
-            self._support_edges(nodes, node_markets)
+            self._adjacent_market_edges(node_markets, node_industries)
         )
+
+        # Final scoring pass: populate semantic_similarity_score and
+        # seo_value_score on every edge (business_value_score is left for
+        # Agent 5, Day 3 — documented, not silently zeroed).
+        self._score_edges(result.edges)
         return result
+
+    # ── embeddings / node signals (loaded lazily, cached per run) ────────────
+
+    def _load_embeddings(self) -> dict[str, dict[str, float]]:
+        """node_id -> sparse TF-IDF vector, from semantic_embeddings."""
+        if getattr(self, "_embeddings", None) is not None:
+            return self._embeddings
+        conn = self._connect_ro()
+        try:
+            self._embeddings = {
+                row["node_id"]: json.loads(row["embedding_vector"])
+                for row in conn.execute(
+                    "SELECT node_id, embedding_vector FROM semantic_embeddings"
+                )
+            }
+        except sqlite3.OperationalError:
+            self._embeddings = {}
+        finally:
+            conn.close()
+        return self._embeddings
+
+    def _load_seo_signals(self) -> dict[str, dict]:
+        """node_id -> {authority (0-1), needs_links (0-1)} for seo_value_score."""
+        if getattr(self, "_seo_signals", None) is not None:
+            return self._seo_signals
+        conn = self._connect_ro()
+        try:
+            rows = conn.execute(
+                "SELECT node_id, page_authority_score, orphan_status "
+                "FROM content_nodes WHERE status='active'"
+            ).fetchall()
+        finally:
+            conn.close()
+        max_auth = max((r["page_authority_score"] or 0.0 for r in rows), default=0.0) or 1.0
+        needs = {"orphan": 1.0, "under_linked": 0.7, "normal": 0.3, "well_linked": 0.1}
+        self._seo_signals = {
+            r["node_id"]: {
+                "authority": (r["page_authority_score"] or 0.0) / max_auth,
+                "needs_links": needs.get(r["orphan_status"], 0.5),
+            }
+            for r in rows
+        }
+        return self._seo_signals
+
+    def _adjacent_market_edges(self, node_markets, node_industries) -> list[Edge]:
+        """Same industry, DIFFERENT market, high textual similarity — the
+        master PRD 'adjacent market' relationship (§15.1). Semantic similarity
+        supplies the candidate; the same-industry guard removes cross-industry
+        geography noise; the different-market requirement makes it 'adjacent'
+        not 'same'."""
+        embeddings = self._load_embeddings()
+        if not embeddings:
+            return []
+        edges = []
+        seen = set()
+        market_holders = [n for n in node_markets if n in embeddings]
+        for a in market_holders:
+            a_markets = set(node_markets.get(a, []))
+            a_industries = node_industries.get(a, set())
+            if not a_industries:
+                continue
+            scored = []
+            for b in market_holders:
+                if b == a:
+                    continue
+                # same industry, different market
+                if not (a_industries & node_industries.get(b, set())):
+                    continue
+                if a_markets & set(node_markets.get(b, [])):
+                    continue  # same market -> that's same_market, not adjacent
+                sim = cosine(embeddings[a], embeddings[b])
+                if sim >= ADJACENT_SIMILARITY_THRESHOLD:
+                    scored.append((sim, b))
+            scored.sort(reverse=True)
+            for sim, b in scored[:MAX_ADJACENT_PER_PAGE]:
+                lo, hi = sorted((a, b))
+                if (lo, hi, "adjacent_market") in seen:
+                    continue
+                seen.add((lo, hi, "adjacent_market"))
+                edges.append(Edge(
+                    source_node_id=lo, target_node_id=hi,
+                    relationship_type="adjacent_market",
+                    relationship_direction="bidirectional",
+                    confidence_score=round(min(0.85, CONFIDENCE["adjacent_market"] + sim * 0.5), 2),
+                    entity_overlap_score=0.5, geo_match_score=0.0,
+                    market_match_score=0.0,
+                    semantic_similarity_score=round(sim, 3),
+                    reason=f"Same industry, different market, text similarity {sim:.2f}",
+                ))
+        return edges
+
+    def _score_edges(self, edges: list[Edge]) -> None:
+        """Populate semantic_similarity_score (from embeddings) and
+        seo_value_score (from the target page's authority + link need) on
+        every edge. business_value_score is intentionally left None until
+        Agent 5 (Day 3) computes business priority."""
+        embeddings = self._load_embeddings()
+        seo = self._load_seo_signals()
+        for e in edges:
+            if e.semantic_similarity_score is None:
+                va, vb = embeddings.get(e.source_node_id), embeddings.get(e.target_node_id)
+                e.semantic_similarity_score = (
+                    round(cosine(va, vb), 3) if va and vb else 0.0
+                )
+            # SEO value of pointing at the target: high when the target has
+            # real authority to gain AND currently needs incoming links.
+            t = seo.get(e.target_node_id)
+            if t:
+                e.seo_value_score = round(
+                    0.5 * t["authority"] + 0.5 * t["needs_links"], 3
+                )
+            else:
+                e.seo_value_score = 0.0
 
     @staticmethod
     def _derive_scope(node_entities: dict[str, list[sqlite3.Row]]) -> dict[str, dict]:
@@ -422,19 +555,22 @@ class RelationshipMappingAgent:
                         confidence_score, semantic_similarity_score, entity_overlap_score,
                         geo_match_score, market_match_score, business_value_score,
                         seo_value_score, created_by, status, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,NULL,?,?,?,NULL,NULL,'agent_3','pending',?,?)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'agent_3','pending',?,?)
                        ON CONFLICT (source_node_id, target_node_id, relationship_type)
                        DO UPDATE SET
                            confidence_score = excluded.confidence_score,
+                           semantic_similarity_score = excluded.semantic_similarity_score,
                            entity_overlap_score = excluded.entity_overlap_score,
                            geo_match_score = excluded.geo_match_score,
                            market_match_score = excluded.market_match_score,
+                           seo_value_score = excluded.seo_value_score,
                            updated_at = excluded.updated_at""",
                     (str(uuid.uuid4()), e.source_node_id, e.target_node_id,
                      e.source_entity_id or None, e.target_entity_id or None,
                      e.relationship_type, e.relationship_direction,
-                     e.confidence_score, e.entity_overlap_score,
-                     e.geo_match_score, e.market_match_score, now, now),
+                     e.confidence_score, e.semantic_similarity_score,
+                     e.entity_overlap_score, e.geo_match_score, e.market_match_score,
+                     e.business_value_score, e.seo_value_score, now, now),
                 )
                 written += 1
 
@@ -518,9 +654,12 @@ def write_report(result: RunResult, summary: dict, output: Path) -> None:
             "relationship_type": e.relationship_type,
             "relationship_direction": e.relationship_direction,
             "confidence_score": e.confidence_score,
+            "semantic_similarity_score": e.semantic_similarity_score,
             "entity_overlap_score": e.entity_overlap_score,
             "geo_match_score": e.geo_match_score,
             "market_match_score": e.market_match_score,
+            "seo_value_score": e.seo_value_score,
+            "business_value_score": e.business_value_score,
             "reason": e.reason,
         }
         for e in result.edges

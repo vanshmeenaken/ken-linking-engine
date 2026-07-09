@@ -27,6 +27,8 @@ def _make_db(tmp_path, nodes, entities):
         CREATE TABLE content_nodes (
             node_id TEXT PRIMARY KEY, url TEXT, content_type TEXT,
             country TEXT, region TEXT, market TEXT, global_or_local TEXT,
+            page_authority_score REAL DEFAULT 0.0,
+            orphan_status TEXT DEFAULT 'normal',
             status TEXT DEFAULT 'active');
         CREATE TABLE content_entities (
             entity_id TEXT PRIMARY KEY, entity_name TEXT, entity_type TEXT,
@@ -48,14 +50,22 @@ def _make_db(tmp_path, nodes, entities):
             log_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, node_id TEXT,
             operation TEXT, status TEXT, entities_found INTEGER,
             low_confidence_count INTEGER, error TEXT, notes TEXT, created_at TEXT);
+        CREATE TABLE semantic_embeddings (
+            embedding_id TEXT PRIMARY KEY, node_id TEXT UNIQUE, text_hash TEXT,
+            source_text TEXT, embedding_model TEXT, embedding_vector TEXT,
+            created_at TEXT, updated_at TEXT);
     """)
     for n in nodes:
         conn.execute(
-            "INSERT INTO content_nodes VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO content_nodes (node_id, url, content_type, country, "
+            "region, market, global_or_local, page_authority_score, "
+            "orphan_status, status) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (n["node_id"], n.get("url", f"https://x/{n['node_id']}"),
              n.get("content_type", "report"), n.get("country", ""),
              n.get("region", ""), n.get("market", ""),
-             n.get("global_or_local", "local"), n.get("status", "active")),
+             n.get("global_or_local", "local"),
+             n.get("page_authority_score", 0.0),
+             n.get("orphan_status", "normal"), n.get("status", "active")),
         )
     entity_ids = {}
     for i, (node_id, etype, ename, erole) in enumerate(entities):
@@ -357,6 +367,102 @@ def test_human_reviewed_edges_are_not_removed_as_stale(tmp_path):
     remaining = {r[0] for r in conn.execute("SELECT edge_id FROM relationship_edges")}
     conn.close()
     assert "human-kept" in remaining  # approved edge survives the re-run
+
+
+def _add_embeddings(db_path, vectors: dict):
+    """vectors: node_id -> {term: weight} sparse vector JSON."""
+    import json as _json
+    conn = sqlite3.connect(db_path)
+    for nid, vec in vectors.items():
+        conn.execute(
+            "INSERT INTO semantic_embeddings (embedding_id, node_id, text_hash, "
+            "embedding_vector) VALUES (?,?,?,?)",
+            (f"emb-{nid}", nid, "h", _json.dumps(vec)),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_adjacent_market_edge_same_industry_diff_market_high_similarity(tmp_path):
+    db = _make_db(
+        tmp_path,
+        nodes=[{"node_id": "n1"}, {"node_id": "n2"}],
+        entities=[
+            ("n1", "industry", "Healthcare", "primary_industry"),
+            ("n1", "market", "Infusion Pumps Market", "primary_market"),
+            ("n2", "industry", "Healthcare", "primary_industry"),
+            ("n2", "market", "Insulin Infusion Pumps Market", "primary_market"),
+        ],
+    )
+    # near-identical unit vectors -> high cosine, above threshold
+    _add_embeddings(db, {
+        "n1": {"infusion": 0.7, "pumps": 0.71},
+        "n2": {"infusion": 0.7, "pumps": 0.71},
+    })
+    _, summary = RelationshipMappingAgent(db_path=db).run(dry_run=True)
+    conn = sqlite3.connect(db); conn.close()
+    assert summary["edges_by_type"].get("adjacent_market", 0) == 1
+
+
+def test_no_adjacent_market_across_different_industries(tmp_path):
+    db = _make_db(
+        tmp_path,
+        nodes=[{"node_id": "n1"}, {"node_id": "n2"}],
+        entities=[
+            ("n1", "industry", "Healthcare", "primary_industry"),
+            ("n1", "market", "Infusion Pumps Market", "primary_market"),
+            ("n2", "industry", "Energy & Utilities", "primary_industry"),
+            ("n2", "market", "Solar Panel Market", "primary_market"),
+        ],
+    )
+    _add_embeddings(db, {  # even with identical vectors, different industry blocks it
+        "n1": {"x": 1.0}, "n2": {"x": 1.0},
+    })
+    _, summary = RelationshipMappingAgent(db_path=db).run(dry_run=True)
+    assert summary["edges_by_type"].get("adjacent_market", 0) == 0
+
+
+def test_no_adjacent_market_below_similarity_threshold(tmp_path):
+    db = _make_db(
+        tmp_path,
+        nodes=[{"node_id": "n1"}, {"node_id": "n2"}],
+        entities=[
+            ("n1", "industry", "Healthcare", "primary_industry"),
+            ("n1", "market", "Infusion Pumps Market", "primary_market"),
+            ("n2", "industry", "Healthcare", "primary_industry"),
+            ("n2", "market", "Dental Chairs Market", "primary_market"),
+        ],
+    )
+    _add_embeddings(db, {  # orthogonal vectors -> cosine 0, below threshold
+        "n1": {"infusion": 1.0}, "n2": {"dental": 1.0},
+    })
+    _, summary = RelationshipMappingAgent(db_path=db).run(dry_run=True)
+    assert summary["edges_by_type"].get("adjacent_market", 0) == 0
+
+
+def test_edges_carry_semantic_and_seo_scores(tmp_path):
+    db = _make_db(
+        tmp_path,
+        nodes=[
+            {"node_id": "n1", "orphan_status": "orphan", "page_authority_score": 50.0},
+            {"node_id": "n2", "orphan_status": "orphan", "page_authority_score": 50.0},
+        ],
+        entities=[
+            ("n1", "market", "Cold Storage Market", "primary_market"),
+            ("n2", "market", "Cold Storage Market", "primary_market"),
+        ],
+    )
+    _add_embeddings(db, {"n1": {"cold": 1.0}, "n2": {"cold": 1.0}})
+    RelationshipMappingAgent(db_path=db).run(dry_run=False)
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT semantic_similarity_score, seo_value_score, business_value_score "
+        "FROM relationship_edges WHERE relationship_type='same_market'"
+    ).fetchone()
+    conn.close()
+    assert row[0] is not None  # semantic similarity populated
+    assert row[1] is not None and row[1] > 0  # seo value populated (orphan target)
+    assert row[2] is None  # business value deferred to Agent 5
 
 
 def test_edges_default_status_pending(tmp_path):
