@@ -1,0 +1,1389 @@
+{
+  "summary": {
+    "run_id": "b0ac5d15-1fe1-4bd1-b0a1-ec13b51938f0",
+    "generated_at": "2026-07-07T20:43:43.902835+00:00",
+    "dry_run": true,
+    "nodes_processed": 25,
+    "nodes_failed": 0,
+    "elapsed_seconds": 0.01,
+    "entity_mappings_by_type": {
+      "country": 17,
+      "region": 25,
+      "market": 25,
+      "time_period": 19,
+      "industry": 23
+    },
+    "unique_entities": 54,
+    "low_confidence_mappings": 0,
+    "coverage": {
+      "pages_with_any_entity_pct": 100.0,
+      "pages_with_geography_pct": 100.0,
+      "pages_with_industry_or_market_pct": 100.0,
+      "pages_with_market_pct": 100.0
+    },
+    "targets": {
+      "pages_with_any_entity_pct": 95.0,
+      "pages_with_geography_pct": 90.0,
+      "pages_with_industry_or_market_pct": 80.0
+    },
+    "methodology": {
+      "sources": "stored metadata only: db industry/country, title, h1, url slug",
+      "normalization": "config/taxonomy.py deterministic rules",
+      "confidence": {
+        "db_field": 0.95,
+        "region_from_country": 0.9,
+        "region_from_scope": 0.9,
+        "country_from_title": 0.65,
+        "time_period_title": 0.85,
+        "market_title_base": 0.65,
+        "market_h1_agreement": 0.15,
+        "market_slug_agreement": 0.1,
+        "market_cap": 0.9
+      },
+      "low_confidence_threshold": 0.5,
+      "deferred": "company/product/technology/regulation/claim/evidence entity types require body content (later phase)"
+    }
+  },
+  "pages": [
+    {
+      "node_id": "0513b7a4-cafe-43ab-9133-8d022f65fe17",
+      "url": "https://www.kenresearch.com/qatar-nordic-regulatory-affairs-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Nordic Regulatory Affairs Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "country",
+          "name": "Qatar",
+          "normalized": "qatar",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Nordic Regulatory Affairs Market",
+          "normalized": "nordic regulatory affairs market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2019-2030",
+          "normalized": "2019-2030",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "5707046a-eba7-4a42-889d-6098f92bb8b0",
+      "url": "https://www.kenresearch.com/qatar-aviation-cybersecurity-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Aviation Cybersecurity Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Defense & Security",
+          "normalized": "defense & security",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Qatar",
+          "normalized": "qatar",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Aviation Cybersecurity Market",
+          "normalized": "aviation cybersecurity market",
+          "role": "primary_market",
+          "source": "title+url_slug",
+          "confidence": 0.75,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2019-2030",
+          "normalized": "2019-2030",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "7d29a377-849a-4842-9655-e6152822502e",
+      "url": "https://www.kenresearch.com/bahrain-pectin-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Pectin Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Metal, Mining and Chemicals",
+          "normalized": "metal, mining and chemicals",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Bahrain",
+          "normalized": "bahrain",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Pectin Market",
+          "normalized": "pectin market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "e239a733-64cd-4236-8ba2-54ab32806278",
+      "url": "https://www.kenresearch.com/indonesia-basalt-fiber-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Basalt Fiber Market",
+      "region_backfill": "Asia Pacific",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Metal, Mining and Chemicals",
+          "normalized": "metal, mining and chemicals",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Indonesia",
+          "normalized": "indonesia",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Asia Pacific",
+          "normalized": "asia pacific",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Basalt Fiber Market",
+          "normalized": "basalt fiber market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2019-2030",
+          "normalized": "2019-2030",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "82d5699b-1105-4af3-94de-bc375063bc81",
+      "url": "https://www.kenresearch.com/united-arab-emirates-low-gwp-refrigerants-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Low GWP Refrigerants Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Energy & Utilities",
+          "normalized": "energy & utilities",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "UAE",
+          "normalized": "uae",
+          "role": "country",
+          "source": "title",
+          "confidence": 0.65,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "title",
+          "confidence": 0.65,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Low GWP Refrigerants Market",
+          "normalized": "low gwp refrigerants market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "b943f5c3-b87f-463d-9d85-373b30ff7455",
+      "url": "https://www.kenresearch.com/us-sports-streaming-platform-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Sports Streaming Market",
+      "region_backfill": "North America",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Media & Entertainment",
+          "normalized": "media & entertainment",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "USA",
+          "normalized": "usa",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "North America",
+          "normalized": "north america",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Sports Streaming Market",
+          "normalized": "sports streaming market",
+          "role": "primary_market",
+          "source": "title+url_slug",
+          "confidence": 0.75,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2019-2030",
+          "normalized": "2019-2030",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "6051d6f2-28cb-4f26-a62c-c94d2ec32398",
+      "url": "https://www.kenresearch.com/global-blood-screening-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Blood Screening Market",
+      "region_backfill": "Global",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Healthcare",
+          "normalized": "healthcare",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Global",
+          "normalized": "global",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "alias",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Blood Screening Market",
+          "normalized": "blood screening market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2024-2030",
+          "normalized": "2024-2030",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "8a96ae2e-cb42-481d-ae01-3c28f490be70",
+      "url": "https://www.kenresearch.com/middle-east-personal-protective-equipment-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Personal Protective Equipment Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Defense & Security",
+          "normalized": "defense & security",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "alias",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Personal Protective Equipment Market",
+          "normalized": "personal protective equipment market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "11939ab5-5d3c-47ad-953d-10dc8a0bfca9",
+      "url": "https://www.kenresearch.com/qatar-cath-labs-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Cath Labs Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Healthcare",
+          "normalized": "healthcare",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Qatar",
+          "normalized": "qatar",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Cath Labs Market",
+          "normalized": "cath labs market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "4990a86a-65cd-4da3-86dc-d357f89bb3df",
+      "url": "https://www.kenresearch.com/industry-reports/north-america-xenon-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Xenon Market",
+      "region_backfill": "North America",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Metal, Mining and Chemicals",
+          "normalized": "metal, mining and chemicals",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "North America",
+          "normalized": "north america",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "alias",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Xenon Market",
+          "normalized": "xenon market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "02cb8c70-531b-4c42-ba74-75c40ba687d0",
+      "url": "https://www.kenresearch.com/middle-east-animal-healthcare-packaging-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Animal Healthcare Packaging Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Agriculture & Animal Care",
+          "normalized": "agriculture & animal care",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "alias",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Animal Healthcare Packaging Market",
+          "normalized": "animal healthcare packaging market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "2d1fade7-a17a-4275-b3a0-90d9f36d14d8",
+      "url": "https://www.kenresearch.com/global-application-container-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Application Container Market",
+      "region_backfill": "Global",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Technology & Telecom",
+          "normalized": "technology & telecom",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Global",
+          "normalized": "global",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "alias",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Application Container Market",
+          "normalized": "application container market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2019-2030",
+          "normalized": "2019-2030",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "01eaea9f-d66d-4770-86a9-ec380c8bc840",
+      "url": "https://www.kenresearch.com/industry-reports/north-america-bone-growth-stimulator-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Bone Growth Stimulator Market, Industry Analysis and Future Forecast to",
+      "region_backfill": "North America",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Healthcare",
+          "normalized": "healthcare",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "North America",
+          "normalized": "north america",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "alias",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Bone Growth Stimulator Market, Industry Analysis and Future Forecast to",
+          "normalized": "bone growth stimulator market, industry analysis and future forecast to",
+          "role": "primary_market",
+          "source": "title",
+          "confidence": 0.65,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "47f01656-d2c8-4ab5-82d1-c0cb3c80bdb1",
+      "url": "https://www.kenresearch.com/brazil-smart-agriculture-and-agri-drones-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Smart Agriculture and Agri Drones Market",
+      "region_backfill": "Latin America",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Agriculture & Animal Care",
+          "normalized": "agriculture & animal care",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Brazil",
+          "normalized": "brazil",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Latin America",
+          "normalized": "latin america",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Smart Agriculture and Agri Drones Market",
+          "normalized": "smart agriculture and agri drones market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "c886d3f3-8e2c-4936-ad3c-217981a5b1bf",
+      "url": "https://www.kenresearch.com/saudi-arabia-inorganic-catalyst-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Inorganic Catalyst Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Metal, Mining and Chemicals",
+          "normalized": "metal, mining and chemicals",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Saudi Arabia",
+          "normalized": "saudi arabia",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Inorganic Catalyst Market",
+          "normalized": "inorganic catalyst market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "f85d9d17-5d20-479c-ad88-6277a7aef73a",
+      "url": "https://www.kenresearch.com/saudi-arabia-ai-cloud-infrastructure-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "AI Cloud Infrastructure Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Technology & Telecom",
+          "normalized": "technology & telecom",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Saudi Arabia",
+          "normalized": "saudi arabia",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "AI Cloud Infrastructure Market",
+          "normalized": "ai cloud infrastructure market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2019-2030",
+          "normalized": "2019-2030",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "660f9bc6-0732-4408-b16f-c2b028e9ef4a",
+      "url": "https://www.kenresearch.com/industry-reports/china-battery-management-system-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Battery Management System Market",
+      "region_backfill": "Asia Pacific",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Automotive, Transportation & Logistics",
+          "normalized": "automotive, transportation & logistics",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "China",
+          "normalized": "china",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Asia Pacific",
+          "normalized": "asia pacific",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Battery Management System Market",
+          "normalized": "battery management system market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "92c655ab-0437-415a-9ad0-a561bd50e94b",
+      "url": "https://www.kenresearch.com/united-states-sustainable-fashion-and-circular-economy-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Sustainable Fashion and Circular Economy Market",
+      "region_backfill": "North America",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Consumer Products & Retail",
+          "normalized": "consumer products & retail",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "USA",
+          "normalized": "usa",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "North America",
+          "normalized": "north america",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Sustainable Fashion and Circular Economy Market",
+          "normalized": "sustainable fashion and circular economy market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "0252a390-6d52-4eea-9976-728b47c050e5",
+      "url": "https://www.kenresearch.com/south-africa-e-learning-and-skills-platforms-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "E-Learning and Skills Platforms Market",
+      "region_backfill": "Africa",
+      "entities": [
+        {
+          "type": "country",
+          "name": "South Africa",
+          "normalized": "south africa",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Africa",
+          "normalized": "africa",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "E-Learning and Skills Platforms Market",
+          "normalized": "e-learning and skills platforms market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "e7127d10-00da-4494-92f1-37a9a64aeca7",
+      "url": "https://www.kenresearch.com/philippines-ulcerative-colitis-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "nan Market",
+      "region_backfill": "Asia Pacific",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Healthcare",
+          "normalized": "healthcare",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Philippines",
+          "normalized": "philippines",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Asia Pacific",
+          "normalized": "asia pacific",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "nan Market",
+          "normalized": "nan market",
+          "role": "primary_market",
+          "source": "title",
+          "confidence": 0.65,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "e0a9dc43-5a01-44ba-aa07-387736750489",
+      "url": "https://www.kenresearch.com/industry-reports/india-online-grocery-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Online Grocery Market, Market",
+      "region_backfill": "Asia Pacific",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Consumer Products & Retail",
+          "normalized": "consumer products & retail",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "India",
+          "normalized": "india",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Asia Pacific",
+          "normalized": "asia pacific",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Online Grocery Market, Market",
+          "normalized": "online grocery market, market",
+          "role": "primary_market",
+          "source": "title",
+          "confidence": 0.65,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "506255b5-571f-4023-a077-2817144b0967",
+      "url": "https://www.kenresearch.com/middle-east-smart-card-materials-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "nan Market",
+      "region_backfill": "Middle East",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Technology & Telecom",
+          "normalized": "technology & telecom",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Middle East",
+          "normalized": "middle east",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "alias",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "nan Market",
+          "normalized": "nan market",
+          "role": "primary_market",
+          "source": "title",
+          "confidence": 0.65,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "b89aea5c-a729-4637-ba0a-78e639f5d425",
+      "url": "https://www.kenresearch.com/japan-compostable-paper-tray-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Compostable Paper Tray Market",
+      "region_backfill": "Asia Pacific",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Consumer Products & Retail",
+          "normalized": "consumer products & retail",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "Japan",
+          "normalized": "japan",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "Asia Pacific",
+          "normalized": "asia pacific",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Compostable Paper Tray Market",
+          "normalized": "compostable paper tray market",
+          "role": "primary_market",
+          "source": "title+h1+url_slug",
+          "confidence": 0.9,
+          "method": "pattern",
+          "low_confidence": false
+        },
+        {
+          "type": "time_period",
+          "name": "2025-2031",
+          "normalized": "2025-2031",
+          "role": "time_period",
+          "source": "title",
+          "confidence": 0.85,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "1cf0d06d-2a63-49e6-a561-592b146f2967",
+      "url": "https://www.kenresearch.com/industry-reports/north-america-maracuja-oil-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Maracuja Oil Market, Industry Growth and Forecast to",
+      "region_backfill": "North America",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Consumer Products & Retail",
+          "normalized": "consumer products & retail",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "North America",
+          "normalized": "north america",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "alias",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Maracuja Oil Market, Industry Growth and Forecast to",
+          "normalized": "maracuja oil market, industry growth and forecast to",
+          "role": "primary_market",
+          "source": "title",
+          "confidence": 0.65,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "node_id": "1caa5d8f-7126-4f95-888b-bd9c7a607ed5",
+      "url": "https://www.kenresearch.com/industry-reports/usa-microscope-market",
+      "content_type": "report",
+      "error": "",
+      "market_backfill": "Microscope Market, Share, Major Players and",
+      "region_backfill": "North America",
+      "entities": [
+        {
+          "type": "industry",
+          "name": "Healthcare",
+          "normalized": "healthcare",
+          "role": "primary_industry",
+          "source": "db_industry",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "country",
+          "name": "USA",
+          "normalized": "usa",
+          "role": "country",
+          "source": "db_country",
+          "confidence": 0.95,
+          "method": "exact_field",
+          "low_confidence": false
+        },
+        {
+          "type": "region",
+          "name": "North America",
+          "normalized": "north america",
+          "role": "region",
+          "source": "db_country",
+          "confidence": 0.9,
+          "method": "derived",
+          "low_confidence": false
+        },
+        {
+          "type": "market",
+          "name": "Microscope Market, Share, Major Players and",
+          "normalized": "microscope market, share, major players and",
+          "role": "primary_market",
+          "source": "title",
+          "confidence": 0.65,
+          "method": "pattern",
+          "low_confidence": false
+        }
+      ]
+    }
+  ]
+}

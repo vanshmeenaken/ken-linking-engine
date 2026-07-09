@@ -8,3 +8,5 @@ logs/*.log
 tmp/
 .playwright-mcp/
 .gitignore~*
+full_database_dump.sql
+db_export_csv/

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from database.db import Base
@@ -68,6 +68,8 @@ class ContentEntity(Base):
     created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
+    __table_args__ = (UniqueConstraint("normalized_name", "entity_type"),)
+
     parent_entity = relationship("ContentEntity", remote_side=[entity_id], backref="child_entities")
 
 
@@ -97,10 +99,107 @@ class RelationshipEdge(Base):
     created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
+    __table_args__ = (UniqueConstraint("source_node_id", "target_node_id", "relationship_type"),)
+
     source_node = relationship("ContentNode", foreign_keys=[source_node_id], back_populates="outgoing_edges")
     target_node = relationship("ContentNode", foreign_keys=[target_node_id], back_populates="incoming_edges")
     source_entity = relationship("ContentEntity", foreign_keys=[source_entity_id])
     target_entity = relationship("ContentEntity", foreign_keys=[target_entity_id])
+
+
+class NodeEntity(Base):
+    """Page-to-entity mapping with per-extraction provenance and confidence.
+    Phase 2 core join table, populated by Agent 2."""
+
+    __tablename__ = "node_entities"
+
+    node_entity_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    node_id = Column(String, ForeignKey("content_nodes.node_id"), nullable=False)
+    entity_id = Column(String, ForeignKey("content_entities.entity_id"), nullable=False)
+    entity_role = Column(String, nullable=False)
+    source_field = Column(String)
+    extracted_value = Column(String)
+    normalized_value = Column(String)
+    confidence_score = Column(Float, default=0.0)
+    extraction_method = Column(String)
+    status = Column(String, default="extracted")
+    created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+
+    __table_args__ = (UniqueConstraint("node_id", "entity_id", "entity_role"),)
+
+    content_node = relationship("ContentNode", foreign_keys=[node_id])
+    entity = relationship("ContentEntity", foreign_keys=[entity_id])
+
+
+class EntityExtractionLog(Base):
+    """Audit trail of Agent 2 extraction runs (Phase 2)."""
+
+    __tablename__ = "entity_extraction_logs"
+
+    log_id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String, nullable=False)
+    node_id = Column(String, ForeignKey("content_nodes.node_id"))
+    operation = Column(String)
+    status = Column(String)
+    entities_found = Column(Integer, default=0)
+    low_confidence_count = Column(Integer, default=0)
+    error = Column(Text)
+    notes = Column(Text)
+    created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SemanticEmbedding(Base):
+    """Per-page semantic representation (TF-IDF sparse vector as JSON in the
+    Phase 2 MVP; model name recorded so an embedding upgrade is additive)."""
+
+    __tablename__ = "semantic_embeddings"
+
+    embedding_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    node_id = Column(String, ForeignKey("content_nodes.node_id"), nullable=False, unique=True)
+    text_hash = Column(String, nullable=False)
+    source_text = Column(Text)
+    embedding_model = Column(String)
+    embedding_vector = Column(Text)
+    created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SeoOpportunity(Base):
+    """Early Agent 4 output: one open opportunity per page per type (Phase 2)."""
+
+    __tablename__ = "seo_opportunities"
+
+    opportunity_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    node_id = Column(String, ForeignKey("content_nodes.node_id"), nullable=False)
+    opportunity_type = Column(String, nullable=False)
+    priority = Column(String)
+    reason = Column(Text)
+    evidence = Column(Text)
+    seo_score = Column(Float, default=0.0)
+    business_score = Column(Float, default=0.0)
+    status = Column(String, default="open")
+    created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+
+    __table_args__ = (UniqueConstraint("node_id", "opportunity_type"),)
+
+
+class IntegrationPlaceholder(Base):
+    """GSC/GA4 schema-readiness rows while credentials are arranged (Phase 2)."""
+
+    __tablename__ = "integration_placeholders"
+
+    integration_id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String, nullable=False)
+    node_id = Column(String, ForeignKey("content_nodes.node_id"))
+    url = Column(String)
+    metric_name = Column(String)
+    metric_value = Column(Float)
+    date_range = Column(String)
+    status = Column(String, default="placeholder")
+    notes = Column(Text)
+    created_at = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class CrawlLog(Base):
@@ -141,3 +240,23 @@ Index("ix_relationship_edges_status", RelationshipEdge.status)
 
 Index("ix_crawl_logs_url", CrawlLog.url)
 Index("ix_crawl_logs_status", CrawlLog.status)
+
+Index("ix_node_entities_node_id", NodeEntity.node_id)
+Index("ix_node_entities_entity_id", NodeEntity.entity_id)
+Index("ix_node_entities_status", NodeEntity.status)
+Index("ix_node_entities_confidence", NodeEntity.confidence_score)
+
+Index("ix_extraction_logs_run_id", EntityExtractionLog.run_id)
+Index("ix_extraction_logs_node_id", EntityExtractionLog.node_id)
+Index("ix_extraction_logs_status", EntityExtractionLog.status)
+
+Index("ix_semantic_embeddings_text_hash", SemanticEmbedding.text_hash)
+
+Index("ix_seo_opportunities_node_id", SeoOpportunity.node_id)
+Index("ix_seo_opportunities_type", SeoOpportunity.opportunity_type)
+Index("ix_seo_opportunities_priority", SeoOpportunity.priority)
+Index("ix_seo_opportunities_status", SeoOpportunity.status)
+
+Index("ix_integration_placeholders_source", IntegrationPlaceholder.source)
+Index("ix_integration_placeholders_node_id", IntegrationPlaceholder.node_id)
+Index("ix_integration_placeholders_metric", IntegrationPlaceholder.metric_name)
