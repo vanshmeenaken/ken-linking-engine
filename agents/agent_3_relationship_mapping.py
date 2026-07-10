@@ -50,7 +50,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from analysis.tfidf_similarity import cosine
+from analysis import llm_subject_judge
+from analysis.tfidf_similarity import build_corpus, cosine
+from analysis.subject_similarity import subject_similarity
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "ken_links.db"
@@ -72,12 +74,21 @@ CONFIDENCE = {
 
 MAX_SAME_MARKET_PAGES_PER_ENTITY = 12  # precision guard: skip hub-like markets
 
-# adjacent_market tuning (Day 2). Threshold and cap chosen from dry-run
-# inspection: genuine cross-geography subject matches score ~0.30-0.40
-# (infusion pumps <-> insulin infusion pumps 0.37, cybersecurity cluster
-# 0.26-0.34); geography-only noise is same-region-different-industry and is
-# already removed by the same-industry guard.
+# adjacent_market / country_region tuning. Both now gated on
+# subject_similarity() (Shrey's 4-layer method, Layers 2+3 — see
+# analysis/subject_similarity.py) instead of plain embedding cosine.
+# Threshold re-validated against live data after the swap: replaying it over
+# the 168 existing adjacent_market pairs and 551 existing country_region
+# pairs, 0.25 keeps the same "genuine cross-geography subject match" band
+# the original dry-run found (0.30-0.40 for strong matches like infusion
+# pumps <-> insulin infusion pumps) while now correctly zeroing out pairs
+# that only shared generic words/years (e.g. the reported Bone Growth
+# Stimulator <-> Microscope country_region edge, both just "...Outlook to
+# 2030" — old score 0.15, new score 0.002). At this bar country_region drops
+# from 551 candidate pairs to ~7 genuine ones; that's the fix, not a bug —
+# most of those 551 never shared a real subject, only a region + industry.
 ADJACENT_SIMILARITY_THRESHOLD = 0.25
+COUNTRY_REGION_SIMILARITY_THRESHOLD = 0.25
 MAX_ADJACENT_PER_PAGE = 5
 
 
@@ -189,13 +200,18 @@ class RelationshipMappingAgent:
             for node_id, ents in node_entities.items()
         }
 
+        titles = self._load_titles(nodes)
+        subject_corpus = build_corpus(list(titles.values()))
+
         result.edges.extend(self._same_market_edges(market_pages, nodes, result))
-        result.edges.extend(self._country_region_edges(scope, node_industries))
+        result.edges.extend(
+            self._country_region_edges(scope, node_industries, titles, subject_corpus)
+        )
         result.edges.extend(self._global_local_edges(scope, node_markets))
         result.edges.extend(self._industry_market_edges(node_entities))
         result.edges.extend(self._support_edges(nodes, node_markets))
         result.edges.extend(
-            self._adjacent_market_edges(node_markets, node_industries)
+            self._adjacent_market_edges(node_markets, node_industries, titles, subject_corpus)
         )
 
         # Final scoring pass: populate semantic_similarity_score and
@@ -224,6 +240,40 @@ class RelationshipMappingAgent:
             conn.close()
         return self._embeddings
 
+    @staticmethod
+    def _llm_confirms(title_a: str, title_b: str) -> bool:
+        """Layer 4 final check on a candidate that already passed Layers
+        2+3. Optional/credential-gated (analysis/llm_subject_judge.py) — a
+        missing key or any API failure returns None, which this treats as
+        "no opinion, trust the deterministic score" (True), never as a
+        rejection. Only an explicit False from the LLM drops the edge."""
+        return llm_subject_judge.judge(title_a, title_b) is not False
+
+    def _load_titles(self, nodes: dict[str, sqlite3.Row]) -> dict[str, str]:
+        """node_id -> subject text for subject_similarity(): title, falling
+        back to h1 when title is missing or corrupted. Found live: 4 pages
+        have a literal 'nan Market...' title (a scrape/parse artifact) while
+        h1 holds the real title — same corruption Agent 2 already works
+        around for entity extraction. Left unfixed here, those 4 pages would
+        wrongly cluster with each other on the shared word 'nan'."""
+        if getattr(self, "_titles", None) is not None:
+            return self._titles
+        conn = self._connect_ro()
+        try:
+            rows = conn.execute(
+                "SELECT node_id, title, h1 FROM content_nodes WHERE node_id IN "
+                f"({','.join('?' * len(nodes))})",
+                tuple(nodes),
+            ).fetchall()
+        finally:
+            conn.close()
+        self._titles = {}
+        for row in rows:
+            title = row["title"] or ""
+            text = row["h1"] if (not title or title.strip().lower().startswith("nan")) else title
+            self._titles[row["node_id"]] = text or ""
+        return self._titles
+
     def _load_seo_signals(self) -> dict[str, dict]:
         """node_id -> {authority (0-1), needs_links (0-1)} for seo_value_score."""
         if getattr(self, "_seo_signals", None) is not None:
@@ -247,18 +297,20 @@ class RelationshipMappingAgent:
         }
         return self._seo_signals
 
-    def _adjacent_market_edges(self, node_markets, node_industries) -> list[Edge]:
-        """Same industry, DIFFERENT market, high textual similarity — the
-        master PRD 'adjacent market' relationship (§15.1). Semantic similarity
-        supplies the candidate; the same-industry guard removes cross-industry
-        geography noise; the different-market requirement makes it 'adjacent'
-        not 'same'."""
-        embeddings = self._load_embeddings()
-        if not embeddings:
-            return []
+    def _adjacent_market_edges(self, node_markets, node_industries, titles, corpus) -> list[Edge]:
+        """Same industry, DIFFERENT market, high SUBJECT similarity — the
+        master PRD 'adjacent market' relationship (§15.1). Uses
+        subject_similarity() (Shrey's 4-layer method, Layers 2+3), not plain
+        embedding cosine: plain cosine let generic shared words ("market",
+        "3pl", a shared forecast year) drive matches between unrelated
+        subjects. The same-industry guard removes cross-industry geography
+        noise; the different-market requirement makes it 'adjacent' not
+        'same'; subject_similarity's tech-intersection gate additionally
+        blocks compound-topic false positives ("AI in Medicine" matching
+        "AI in Robotics")."""
         edges = []
         seen = set()
-        market_holders = [n for n in node_markets if n in embeddings]
+        market_holders = [n for n in node_markets if titles.get(n)]
         for a in market_holders:
             a_markets = set(node_markets.get(a, []))
             a_industries = node_industries.get(a, set())
@@ -273,8 +325,8 @@ class RelationshipMappingAgent:
                     continue
                 if a_markets & set(node_markets.get(b, [])):
                     continue  # same market -> that's same_market, not adjacent
-                sim = cosine(embeddings[a], embeddings[b])
-                if sim >= ADJACENT_SIMILARITY_THRESHOLD:
+                sim = subject_similarity(corpus, titles[a], titles[b])
+                if sim >= ADJACENT_SIMILARITY_THRESHOLD and self._llm_confirms(titles[a], titles[b]):
                     scored.append((sim, b))
             scored.sort(reverse=True)
             for sim, b in scored[:MAX_ADJACENT_PER_PAGE]:
@@ -290,7 +342,7 @@ class RelationshipMappingAgent:
                     entity_overlap_score=0.5, geo_match_score=0.0,
                     market_match_score=0.0,
                     semantic_similarity_score=round(sim, 3),
-                    reason=f"Same industry, different market, text similarity {sim:.2f}",
+                    reason=f"Same industry, different market, subject similarity {sim:.2f}",
                 ))
         return edges
 
@@ -359,19 +411,23 @@ class RelationshipMappingAgent:
         return edges
 
     def _country_region_edges(self, scope: dict[str, dict],
-                              node_industries: dict[str, set[str]]) -> list[Edge]:
+                              node_industries: dict[str, set[str]],
+                              titles: dict[str, str], corpus) -> list[Edge]:
         """Region-hub page(s) linked to local-country page(s) in that region,
-        gated by a shared industry.
+        gated by a shared industry AND subject similarity.
 
-        Geography match alone is not enough here — dry-run inspection found
-        it otherwise connects completely unrelated subjects (a "GCC
-        Serverless Computing" report and "Kuwait Freight Trucking", joined
-        only by both being Middle East). Requiring a shared industry keeps
-        the project's precision-first bar (same reasoning that removed the
-        industry+country fallback from case_study_support): the master PRD's
-        own definition of this edge type (§15.2, geography hierarchy) is
-        still honored, but scoped to pages a reader in the region would
-        actually find related.
+        Geography + industry alone is not enough here — a real live example
+        Shrey flagged: "North America Bone Growth Stimulator Market" linked
+        to "USA Microscope Market", both just "Healthcare"/"Medical Devices"
+        in the same region. Auditing all 551 pre-fix country_region edges
+        found under 2% (6/551) scored >= 0.30 on real subject overlap; the
+        rest shared only region + broad industry, exactly this failure mode.
+        Requiring subject_similarity() (Shrey's 4-layer method, Layers 2+3)
+        on top of the industry guard keeps the project's precision-first bar
+        (same reasoning that removed the industry+country fallback from
+        case_study_support): the master PRD's own definition of this edge
+        type (§15.2, geography hierarchy) is still honored, but scoped to
+        pages a reader in the region would actually find related.
 
         Scope (is_local / region) comes from Agent 2's entity extraction, not
         raw content_nodes columns — see build_edges() for why.
@@ -395,23 +451,33 @@ class RelationshipMappingAgent:
                 continue
             for hub in hubs:
                 hub_industries = node_industries.get(hub, set())
-                if not hub_industries:
+                if not hub_industries or not titles.get(hub):
                     continue
-                matched_locals = [
-                    local_id for local_id in locals_in_region
-                    if node_industries.get(local_id, set()) & hub_industries
-                ]
-                for local_id in matched_locals[:MAX_SAME_MARKET_PAGES_PER_ENTITY]:
+                scored = []
+                for local_id in locals_in_region:
+                    if not (node_industries.get(local_id, set()) & hub_industries):
+                        continue
+                    if not titles.get(local_id):
+                        continue
+                    sim = subject_similarity(corpus, titles[hub], titles[local_id])
+                    if (sim >= COUNTRY_REGION_SIMILARITY_THRESHOLD
+                            and self._llm_confirms(titles[hub], titles[local_id])):
+                        scored.append((sim, local_id))
+                scored.sort(reverse=True)
+                for sim, local_id in scored[:MAX_SAME_MARKET_PAGES_PER_ENTITY]:
                     a, b = sorted((hub, local_id))
                     edges.append(Edge(
                         source_node_id=a, target_node_id=b,
                         relationship_type="country_region",
                         relationship_direction="bidirectional",
-                        confidence_score=CONFIDENCE["country_region"],
+                        confidence_score=round(
+                            min(0.85, CONFIDENCE["country_region"] + sim * 0.3), 2
+                        ),
                         entity_overlap_score=0.5, geo_match_score=1.0,
                         market_match_score=0.0,
+                        semantic_similarity_score=round(sim, 3),
                         reason=f"Region-scope page and a local page both in {region}, "
-                               f"same industry",
+                               f"same industry, subject similarity {sim:.2f}",
                     ))
         return edges
 

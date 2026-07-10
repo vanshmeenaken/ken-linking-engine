@@ -27,6 +27,7 @@ def _make_db(tmp_path, nodes, entities):
         CREATE TABLE content_nodes (
             node_id TEXT PRIMARY KEY, url TEXT, content_type TEXT,
             country TEXT, region TEXT, market TEXT, global_or_local TEXT,
+            title TEXT DEFAULT '', h1 TEXT DEFAULT '',
             page_authority_score REAL DEFAULT 0.0,
             orphan_status TEXT DEFAULT 'normal',
             status TEXT DEFAULT 'active');
@@ -58,12 +59,17 @@ def _make_db(tmp_path, nodes, entities):
     for n in nodes:
         conn.execute(
             "INSERT INTO content_nodes (node_id, url, content_type, country, "
-            "region, market, global_or_local, page_authority_score, "
-            "orphan_status, status) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "region, market, global_or_local, title, h1, page_authority_score, "
+            "orphan_status, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (n["node_id"], n.get("url", f"https://x/{n['node_id']}"),
              n.get("content_type", "report"), n.get("country", ""),
              n.get("region", ""), n.get("market", ""),
              n.get("global_or_local", "local"),
+             # default: unique per node so subject_similarity gating (used by
+             # adjacent_market / country_region) doesn't accidentally match
+             # unrelated fixture nodes that never set a real title
+             n.get("title", f"{n['node_id']} placeholder market"),
+             n.get("h1", ""),
              n.get("page_authority_score", 0.0),
              n.get("orphan_status", "normal"), n.get("status", "active")),
         )
@@ -131,12 +137,16 @@ def test_hub_market_precision_guard_skips_wide_clusters(tmp_path):
 
 
 def test_country_region_requires_shared_industry(tmp_path):
-    # hub (no country entity, has region) + local (has country) — SAME industry
+    # hub (no country entity, has region) + local (has country) — SAME industry,
+    # and titles share a real subject ("telecom infrastructure") so the
+    # subject_similarity gate passes too
     db = _make_db(
         tmp_path,
         nodes=[
-            {"node_id": "hub", "region": "Middle East", "global_or_local": "global"},
-            {"node_id": "local", "region": "Middle East", "country": "kuwait"},
+            {"node_id": "hub", "region": "Middle East", "global_or_local": "global",
+             "title": "GCC Telecom Infrastructure Market"},
+            {"node_id": "local", "region": "Middle East", "country": "kuwait",
+             "title": "Kuwait Telecom Infrastructure Market"},
         ],
         entities=[
             ("hub", "region", "Middle East", "region"),
@@ -201,6 +211,34 @@ def test_country_region_uses_entity_scope_not_stale_content_nodes_fields(tmp_pat
     result, _ = agent.run(dry_run=True)
     # Both pages have a country entity -> both are 'local' -> no hub exists
     # -> no country_region edge should be created between them
+    assert not any(e.relationship_type == "country_region" for e in result.edges)
+
+
+def test_country_region_rejects_subject_mismatch_even_with_shared_industry(tmp_path):
+    # Real bad edge Shrey flagged live: "North America Bone Growth Stimulator
+    # Market" <-> "USA Microscope Market" — same broad industry (Healthcare),
+    # same region, but zero real subject overlap. Shared industry alone must
+    # not be enough; subject_similarity() has to gate this too.
+    db = _make_db(
+        tmp_path,
+        nodes=[
+            {"node_id": "hub", "region": "North America", "global_or_local": "global",
+             "title": "North America Bone Growth Stimulator Market, Industry "
+                      "Analysis and Future Forecast to 2030"},
+            {"node_id": "local", "region": "North America", "country": "usa",
+             "title": "USA Microscope Market, Share, Major Players and "
+                      "Outlook to 2030"},
+        ],
+        entities=[
+            ("hub", "region", "North America", "region"),
+            ("hub", "industry", "Healthcare", "primary_industry"),
+            ("local", "region", "North America", "region"),
+            ("local", "country", "USA", "country"),
+            ("local", "industry", "Healthcare", "primary_industry"),
+        ],
+    )
+    agent = RelationshipMappingAgent(db_path=db)
+    result, _ = agent.run(dry_run=True)
     assert not any(e.relationship_type == "country_region" for e in result.edges)
 
 
@@ -386,7 +424,10 @@ def _add_embeddings(db_path, vectors: dict):
 def test_adjacent_market_edge_same_industry_diff_market_high_similarity(tmp_path):
     db = _make_db(
         tmp_path,
-        nodes=[{"node_id": "n1"}, {"node_id": "n2"}],
+        nodes=[
+            {"node_id": "n1", "title": "India Infusion Pumps Market"},
+            {"node_id": "n2", "title": "Saudi Arabia Insulin Infusion Pumps Market"},
+        ],
         entities=[
             ("n1", "industry", "Healthcare", "primary_industry"),
             ("n1", "market", "Infusion Pumps Market", "primary_market"),
@@ -394,20 +435,18 @@ def test_adjacent_market_edge_same_industry_diff_market_high_similarity(tmp_path
             ("n2", "market", "Insulin Infusion Pumps Market", "primary_market"),
         ],
     )
-    # near-identical unit vectors -> high cosine, above threshold
-    _add_embeddings(db, {
-        "n1": {"infusion": 0.7, "pumps": 0.71},
-        "n2": {"infusion": 0.7, "pumps": 0.71},
-    })
+    # shared subject ("infusion pumps") -> subject_similarity above threshold
     _, summary = RelationshipMappingAgent(db_path=db).run(dry_run=True)
-    conn = sqlite3.connect(db); conn.close()
     assert summary["edges_by_type"].get("adjacent_market", 0) == 1
 
 
 def test_no_adjacent_market_across_different_industries(tmp_path):
     db = _make_db(
         tmp_path,
-        nodes=[{"node_id": "n1"}, {"node_id": "n2"}],
+        nodes=[
+            {"node_id": "n1", "title": "India Infusion Pumps Market"},
+            {"node_id": "n2", "title": "Saudi Arabia Insulin Infusion Pumps Market"},
+        ],
         entities=[
             ("n1", "industry", "Healthcare", "primary_industry"),
             ("n1", "market", "Infusion Pumps Market", "primary_market"),
@@ -415,9 +454,7 @@ def test_no_adjacent_market_across_different_industries(tmp_path):
             ("n2", "market", "Solar Panel Market", "primary_market"),
         ],
     )
-    _add_embeddings(db, {  # even with identical vectors, different industry blocks it
-        "n1": {"x": 1.0}, "n2": {"x": 1.0},
-    })
+    # even with near-identical titles, different industry blocks it
     _, summary = RelationshipMappingAgent(db_path=db).run(dry_run=True)
     assert summary["edges_by_type"].get("adjacent_market", 0) == 0
 
@@ -425,7 +462,10 @@ def test_no_adjacent_market_across_different_industries(tmp_path):
 def test_no_adjacent_market_below_similarity_threshold(tmp_path):
     db = _make_db(
         tmp_path,
-        nodes=[{"node_id": "n1"}, {"node_id": "n2"}],
+        nodes=[
+            {"node_id": "n1", "title": "India Infusion Pumps Market"},
+            {"node_id": "n2", "title": "Saudi Arabia Dental Chairs Market"},
+        ],
         entities=[
             ("n1", "industry", "Healthcare", "primary_industry"),
             ("n1", "market", "Infusion Pumps Market", "primary_market"),
@@ -433,9 +473,7 @@ def test_no_adjacent_market_below_similarity_threshold(tmp_path):
             ("n2", "market", "Dental Chairs Market", "primary_market"),
         ],
     )
-    _add_embeddings(db, {  # orthogonal vectors -> cosine 0, below threshold
-        "n1": {"infusion": 1.0}, "n2": {"dental": 1.0},
-    })
+    # no shared subject noun -> subject_similarity ~0, below threshold
     _, summary = RelationshipMappingAgent(db_path=db).run(dry_run=True)
     assert summary["edges_by_type"].get("adjacent_market", 0) == 0
 
