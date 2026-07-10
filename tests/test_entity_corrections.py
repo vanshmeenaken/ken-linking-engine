@@ -35,7 +35,13 @@ def db(tmp_path):
             log_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, node_id TEXT,
             operation TEXT, status TEXT, entities_found INTEGER,
             low_confidence_count INTEGER, error TEXT, notes TEXT, created_at TEXT);
+        CREATE TABLE relationship_edges (
+            edge_id TEXT PRIMARY KEY, source_node_id TEXT, target_node_id TEXT,
+            source_entity_id TEXT REFERENCES content_entities(entity_id),
+            target_entity_id TEXT REFERENCES content_entities(entity_id),
+            relationship_type TEXT);
     """)
+    conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("INSERT INTO content_nodes VALUES ('n1','https://x/one')")
     conn.execute("INSERT INTO content_nodes VALUES ('n2','https://x/two')")
     # Duplicate pair: plural + singular
@@ -99,6 +105,34 @@ def test_merge_duplicates_apply(db):
     assert conn.execute(
         "SELECT COUNT(*) FROM entity_extraction_logs WHERE operation='merge_duplicate'"
     ).fetchone()[0] == 1
+    conn.close()
+
+
+def test_merge_duplicates_repoints_relationship_edges(db):
+    # Real bug found running this live: relationship_edges references
+    # content_entities via source_entity_id/target_entity_id (added by
+    # Agent 3, after this merge tool was written) — deleting a loser entity
+    # without repointing those crashed with a foreign key violation.
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO relationship_edges VALUES "
+        "('edge1','n1','n2','e-plural','e-singular','same_market')"
+    )
+    conn.commit()
+    conn.close()
+
+    assert _run(db, "merge-duplicates", "--apply") == 0
+
+    conn = sqlite3.connect(db)
+    remaining_entity = conn.execute("SELECT entity_id FROM content_entities").fetchone()[0]
+    edge = conn.execute(
+        "SELECT source_entity_id, target_entity_id FROM relationship_edges WHERE edge_id='edge1'"
+    ).fetchone()
+    # Both sides of the edge now point at the surviving entity, never a
+    # deleted one — the FK constraint itself proves this (row would refuse
+    # to exist otherwise), but assert explicitly for clarity.
+    assert edge[0] == remaining_entity
+    assert edge[1] == remaining_entity
     conn.close()
 
 

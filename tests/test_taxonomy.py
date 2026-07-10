@@ -3,6 +3,7 @@
 from config.taxonomy import (
     ENTITY_TYPES,
     classify_geo,
+    extract_market_from_narrative_tail,
     extract_market_from_title,
     normalize_country,
     normalize_industry,
@@ -123,3 +124,118 @@ def test_market_extraction_rejects_nan_corruption():
         geography_words=["philippines"],
     ) == ""
     assert extract_market_from_title("nan Market Size & Forecast Report") == ""
+
+
+def test_market_extraction_allows_legitimate_possessive_names():
+    # Regression (2026-07-10): apostrophe normalization made the old "'s "
+    # tell-word check start firing on curly-apostrophe titles for the first
+    # time, incorrectly rejecting real possessive market names.
+    assert extract_market_from_title(
+        "Saudi Arabia Women's Fertility Clinics Market Share, Companies & Trends Report 2025-2031",
+        geography_words=["saudi arabia"],
+    ) == "Women's Fertility Clinics Market"
+
+
+def test_market_extraction_still_rejects_sunopta_via_driving_tell():
+    # The "'s " removal must not resurrect this — " driving " independently
+    # rejects it.
+    assert extract_market_from_title(
+        "SunOpta's Strategic Shift Driving Global Vegan Food Market Growth"
+    ) == ""
+
+
+def test_market_extraction_allows_alphanumeric_codes():
+    # K-12, P2P, B2B, 3D etc. are real market-name components, not stats —
+    # only a LEADING digit/currency signal should reject.
+    assert extract_market_from_title(
+        "India B2B Packaging Market: Pricing Strategy & GTM Insights",
+        geography_words=["india"],
+    ) == "B2B Packaging Market"
+
+
+def test_market_extraction_rejects_leading_currency_code():
+    assert extract_market_from_title("PHP 6 trillion Market Expansion") == ""
+    assert extract_market_from_title("USD 15 Billion Global Citrus Market") == ""
+
+
+# ── extract_market_from_narrative_tail (fallback tier, articles only) ───────
+
+def test_narrative_tail_recovers_mid_sentence_market():
+    result = extract_market_from_narrative_tail(
+        "How Saudi Arabia's Logistics Market is Evolving with Vision 2030",
+        geography_words=["saudi arabia"],
+    )
+    assert result == "Logistics Market"
+
+
+def test_narrative_tail_recovers_after_colon():
+    # The strict path truncates AT the colon and loses this; the tail
+    # fallback deliberately does not truncate there.
+    result = extract_market_from_narrative_tail(
+        "L&T's Trillion Order Book: Future of India's EPC Market",
+        geography_words=["india"],
+    )
+    assert result == "EPC Market"
+
+
+def test_narrative_tail_recovers_after_pipe_and_preposition():
+    result = extract_market_from_narrative_tail(
+        "AkzoNobel Growth in Vietnam Paints Market | Ken Research",
+        geography_words=["vietnam"],
+    )
+    assert result == "Paints Market"
+
+
+def test_narrative_tail_recovers_after_stat_prefix():
+    result = extract_market_from_narrative_tail(
+        "8.96% Revenue Growth and Stronger Margins Are Positioning BFC Ahead "
+        "of Smaller Competitors in Vietnam's Fertilizer Market",
+        geography_words=["vietnam"],
+    )
+    assert result == "Fertilizer Market"
+
+
+def test_narrative_tail_strips_generic_modifier_when_subject_remains():
+    result = extract_market_from_narrative_tail(
+        "SunOpta's Strategic Shift Driving Global Vegan Food Market Growth"
+    )
+    assert result == "Vegan Food Market"
+
+
+def test_narrative_tail_rejects_generic_modifier_with_no_subject():
+    # "Emerging" + "Markets" alone has no specific subject — must not invent one
+    result = extract_market_from_narrative_tail(
+        "Autonomous Vehicle Adoption in Emerging Markets Through 2030"
+    )
+    assert result == ""
+
+
+def test_narrative_tail_returns_empty_when_no_market_word():
+    assert extract_market_from_narrative_tail(
+        "India Diesel and Gas Genset Industry After-Sales Crisis"
+    ) == ""
+
+
+def test_narrative_tail_rejects_currency_figure():
+    # Real bug found in this fallback specifically: a leading rupee figure
+    # must still be rejected even after tail-cutting.
+    result = extract_market_from_narrative_tail(
+        "How India's ₹6.5 Lakh Crore Wedding Market Fuels GDP Growth",
+        geography_words=["india"],
+    )
+    assert result == ""
+
+
+def test_market_extraction_rejects_verb_before_mid_phrase_possessive():
+    # Real bug found live: passed every other guard, kept "Publisher Cracks"
+    # as junk prefix because the possessive wasn't at position 0.
+    assert extract_market_from_title(
+        "Global Publisher Cracks India's K-12 Curriculum Market with Strategy"
+    ) == ""
+
+
+def test_market_extraction_allows_leading_possessive_still():
+    # Position 0 possessive must still pass (regression guard for the fix above)
+    assert extract_market_from_title(
+        "India's Sleep Market", geography_words=[]
+    ) == "India's Sleep Market"

@@ -149,3 +149,136 @@ def test_market_falls_back_to_h1_when_title_corrupted():
     # H1 is the primary source (title was corrupted); the URL slug also
     # agrees ("...ulcerative-colitis-market"), adding confidence
     assert market.source_field == "h1+url_slug"
+
+
+def test_narrative_tail_fallback_recovers_article_market():
+    result = _agent().extract_node(_node(
+        content_type="article",
+        url="https://www.kenresearch.com/articles/akzonobel-growth-strategy",
+        title="AkzoNobel Growth in Vietnam Paints Market | Ken Research",
+        h1="5% Growth in a 2% Market: How Is AkzoNobel Winning",
+        country="vietnam",
+    ))
+    (market,) = _by_type(result, "market")
+    assert market.entity_name == "Paints Market"
+    assert "narrative_tail" in market.source_field
+    assert market.confidence == CONFIDENCE["market_narrative_tail"]
+
+
+def test_narrative_tail_fallback_scoped_to_articles_only():
+    # Same narrative title, but on a case_study page — must NOT fire.
+    # Case-study titles use a different style this fallback wasn't built
+    # for (tested: 14/15 recoveries were garbage before this restriction).
+    result = _agent().extract_node(_node(
+        content_type="case_study",
+        url="https://www.kenresearch.com/case-studies/akzonobel-growth-strategy",
+        title="AkzoNobel Growth in Vietnam Paints Market | Ken Research",
+        h1="5% Growth in a 2% Market: How Is AkzoNobel Winning",
+        country="vietnam",
+    ))
+    assert _by_type(result, "market") == []
+
+
+def _make_min_db(tmp_path, node):
+    """Minimal real content_nodes table Agent 2's run() can read/write."""
+    import sqlite3
+    path = tmp_path / "test.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE content_nodes (
+            node_id TEXT PRIMARY KEY, url TEXT, title TEXT, h1 TEXT,
+            meta_description TEXT, content_type TEXT, industry TEXT,
+            country TEXT, market TEXT DEFAULT '', region TEXT DEFAULT '',
+            status TEXT DEFAULT 'active', updated_at TEXT);
+        CREATE TABLE content_entities (
+            entity_id TEXT PRIMARY KEY, entity_name TEXT, entity_type TEXT,
+            normalized_name TEXT, aliases TEXT, industry TEXT, country TEXT,
+            region TEXT, confidence_score REAL, created_at TEXT, updated_at TEXT,
+            UNIQUE (normalized_name, entity_type));
+        CREATE TABLE node_entities (
+            node_entity_id TEXT PRIMARY KEY, node_id TEXT, entity_id TEXT,
+            entity_role TEXT, source_field TEXT, extracted_value TEXT,
+            normalized_value TEXT, confidence_score REAL, extraction_method TEXT,
+            status TEXT DEFAULT 'extracted', created_at TEXT, updated_at TEXT,
+            UNIQUE (node_id, entity_id, entity_role));
+        CREATE TABLE entity_extraction_logs (
+            log_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, node_id TEXT,
+            operation TEXT, status TEXT, entities_found INTEGER,
+            low_confidence_count INTEGER, error TEXT, notes TEXT, created_at TEXT);
+    """)
+    conn.execute(
+        "INSERT INTO content_nodes (node_id, url, title, h1, meta_description, "
+        "content_type, industry, country, status) VALUES (?,?,?,?,?,?,?,?,'active')",
+        (node["node_id"], node["url"], node["title"], node["h1"], "",
+         node.get("content_type", "report"), node.get("industry", ""),
+         node.get("country", "")),
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_stale_mapping_removed_when_extraction_no_longer_produces_it(tmp_path):
+    # Regression: a case-study page kept two generations of a wrong market
+    # entity across re-runs (a guard fix now correctly rejects the title,
+    # but the old mapping wasn't cleaned up). Run once with a title that
+    # extracts a market, then edit the title so extraction correctly
+    # produces nothing, re-run, and confirm the stale row is gone.
+    db = _make_min_db(tmp_path, {
+        "node_id": "n1", "url": "https://www.kenresearch.com/x",
+        "title": "India Sleep Market", "h1": "India Sleep Market",
+        "country": "india",
+    })
+    import sqlite3
+    agent1 = EntityExtractionAgent(db_path=db)
+    agent1.run(dry_run=False)
+    conn = sqlite3.connect(db)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM node_entities WHERE node_id='n1' AND entity_role='primary_market'"
+    ).fetchone()[0] == 1
+    conn.close()
+
+    # Now the title no longer yields a market at all
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE content_nodes SET title=?, h1=? WHERE node_id='n1'",
+                 ("Completely Unrelated Story About Nothing Specific", "Completely Unrelated Story About Nothing Specific"))
+    conn.commit()
+    conn.close()
+
+    agent2 = EntityExtractionAgent(db_path=db)
+    _, summary = agent2.run(dry_run=False)
+    conn = sqlite3.connect(db)
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM node_entities WHERE node_id='n1' AND entity_role='primary_market'"
+    ).fetchone()[0]
+    conn.close()
+    assert remaining == 0
+    assert summary["stale_mappings_removed"] == 1
+
+
+def test_human_reviewed_mapping_not_removed_as_stale(tmp_path):
+    db = _make_min_db(tmp_path, {
+        "node_id": "n1", "url": "https://www.kenresearch.com/x",
+        "title": "India Sleep Market", "h1": "India Sleep Market",
+        "country": "india",
+    })
+    import sqlite3
+    EntityExtractionAgent(db_path=db).run(dry_run=False)
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "UPDATE node_entities SET status='approved' WHERE node_id='n1' "
+        "AND entity_role='primary_market'"
+    )
+    conn.commit()
+    conn.execute("UPDATE content_nodes SET title=?, h1=? WHERE node_id='n1'",
+                 ("Completely Unrelated Story About Nothing Specific", "Completely Unrelated Story About Nothing Specific"))
+    conn.commit()
+    conn.close()
+
+    EntityExtractionAgent(db_path=db).run(dry_run=False)
+    conn = sqlite3.connect(db)
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM node_entities WHERE node_id='n1' AND entity_role='primary_market'"
+    ).fetchone()[0]
+    conn.close()
+    assert remaining == 1  # approved mapping survives

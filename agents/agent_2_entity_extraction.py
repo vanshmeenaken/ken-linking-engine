@@ -52,6 +52,7 @@ from config.taxonomy import (
     COUNTRY_ALIASES,
     SCOPE_VALUES,
     classify_geo,
+    extract_market_from_narrative_tail,
     extract_market_from_title,
     normalize_industry,
     normalize_market_name,
@@ -75,6 +76,13 @@ CONFIDENCE = {
     "market_h1_agreement": 0.15,
     "market_slug_agreement": 0.10,
     "market_cap": 0.90,
+    # Lower than the base tier: derived from a narrative headline (fallback
+    # tier, tried only when strict extraction on both title and H1 finds
+    # nothing). Deliberately lands in the 0.5-0.7 "review" band rather than
+    # being trusted outright — recovers real signal from narrative article
+    # titles (Shrey-reported, 2026-07-10) without pretending it's as certain
+    # as a clean report-title extraction.
+    "market_narrative_tail": 0.55,
 }
 
 _YEAR_RANGE = re.compile(r"\b(\d{4})\s*(?:[-–—�]|to)\s*(\d{4})\b", re.I)
@@ -288,7 +296,28 @@ class EntityExtractionAgent:
             confidence = CONFIDENCE["market_title_base"]
             sources = ["h1"]
         else:
-            return
+            # Both strict attempts failed. Narrative-style ARTICLE titles
+            # ("How Saudi Arabia's Logistics Market is Evolving...") often DO
+            # state a real market, just not at the start of the sentence —
+            # try the narrative-tail fallback before giving up.
+            #
+            # Scoped to articles only (Shrey-reported + tested, 2026-07-10):
+            # case_study titles use a completely different narrative style
+            # ("Retail Group Achieved 10% QSR Market", "Accelerate Market")
+            # that this stopper-word design wasn't built for — tested against
+            # real data and 14 of 15 case-study recoveries were garbage vs.
+            # 7 of 7 clean for articles. Precision over coverage: only run
+            # where it's proven to work.
+            if node.get("content_type") != "article":
+                return
+            tail_market = extract_market_from_narrative_tail(
+                node.get("title", ""), geo_words
+            ) or extract_market_from_narrative_tail(node.get("h1", ""), geo_words)
+            if not tail_market:
+                return
+            title_market = tail_market
+            confidence = CONFIDENCE["market_narrative_tail"]
+            sources = ["title_narrative_tail"]
         # Independent URL-slug agreement: every content word of the market
         # name (minus 'market') appears in the slug
         slug = urlsplit(node["url"]).path.lower()
@@ -342,11 +371,13 @@ class EntityExtractionAgent:
         print(f"Agent 2 — Entity Extraction | run {self.run_id[:8]}")
         print(f"Processing {len(nodes)} active nodes (dry_run={dry_run})...")
         started = time.perf_counter()
+        self._stale_removed = 0
         results = [self.extract_node(node) for node in nodes]
         elapsed = round(time.perf_counter() - started, 2)
         summary = self._summary(results, elapsed, dry_run)
         if not dry_run:
             self._write_database(results)
+        summary["stale_mappings_removed"] = self._stale_removed
         return results, summary
 
     # ── write ───────────────────────────────────────────────────────────────
@@ -434,6 +465,35 @@ class EntityExtractionAgent:
                          result.region_backfill, result.region_backfill,
                          now, result.node_id),
                     )
+
+            # Remove stale mappings: an entity assignment from a previous run
+            # that this run's current extraction logic no longer reproduces
+            # (e.g. a guard fix now correctly rejects a title that used to
+            # slip through — verified live: a case-study page kept two
+            # generations of a wrong "Publisher Cracks India's K-12..."
+            # market entity across re-runs, neither ever cleaned up). Only
+            # untouched 'extracted' mappings are eligible — anything a human
+            # has approved/rejected/corrected via the correction workflow is
+            # preserved. Mirrors the identical fix already made in Agent 3
+            # for relationship_edges.
+            stale_removed = 0
+            for result in successful:
+                current = {
+                    (e.entity_role, entity_ids[(e.normalized_name, e.entity_type)])
+                    for e in result.entities
+                }
+                existing = conn.execute(
+                    "SELECT node_entity_id, entity_role, entity_id FROM node_entities "
+                    "WHERE node_id=? AND status='extracted'",
+                    (result.node_id,),
+                ).fetchall()
+                for row in existing:
+                    if (row[1], row[2]) not in current:
+                        conn.execute(
+                            "DELETE FROM node_entities WHERE node_entity_id=?", (row[0],)
+                        )
+                        stale_removed += 1
+            self._stale_removed = stale_removed
 
             for result in results:
                 conn.execute(
@@ -577,6 +637,7 @@ def main(argv=None):
     print(f"Unique entities: {summary['unique_entities']}")
     print(f"Mappings by type: {summary['entity_mappings_by_type']}")
     print(f"Low-confidence mappings: {summary['low_confidence_mappings']}")
+    print(f"Stale mappings removed: {summary.get('stale_mappings_removed', 0)}")
     for name, value in summary["coverage"].items():
         target = summary["targets"].get(name)
         marker = ""

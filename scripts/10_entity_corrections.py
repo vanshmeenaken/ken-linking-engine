@@ -129,6 +129,21 @@ def cmd_merge_duplicates(db_path: Path, apply: bool) -> int:
                     "UPDATE node_entities SET entity_id=?, updated_at=? WHERE entity_id=?",
                     (keeper["entity_id"], _now(), loser["entity_id"]),
                 )
+                # Agent 3's relationship_edges also references content_entities
+                # (source_entity_id/target_entity_id) — repoint those too, or
+                # the DELETE below violates the foreign key constraint (real
+                # bug found running this live: crashed mid-merge, Day 4's
+                # merge tool predates Agent 3's entity-referencing edges).
+                conn.execute(
+                    "UPDATE relationship_edges SET source_entity_id=? "
+                    "WHERE source_entity_id=?",
+                    (keeper["entity_id"], loser["entity_id"]),
+                )
+                conn.execute(
+                    "UPDATE relationship_edges SET target_entity_id=? "
+                    "WHERE target_entity_id=?",
+                    (keeper["entity_id"], loser["entity_id"]),
+                )
                 conn.execute(
                     "DELETE FROM content_entities WHERE entity_id=?",
                     (loser["entity_id"],),

@@ -180,6 +180,33 @@ _FIRST_MARKET_WORD = re.compile(r"^(.*?\bmarkets?\b)", re.I)
 
 _MAX_MARKET_WORDS = 8  # longer names are junk narrative, reject (precision-first)
 
+_CURRENCY_CODES = {"usd", "aed", "sar", "eur", "gbp", "inr", "php", "vnd", "pkr", "bdt"}
+
+# Generic scope words that sit in front of a market name without being part
+# of its identity ("Global Vegan Food Market" -> the market is "Vegan Food
+# Market"; "Emerging Markets" -> nothing specific, must be rejected, not
+# invented). Stripped the same way a geography prefix is stripped; if
+# stripping empties the phrase down to just "Market"/"Markets", the existing
+# 2-word-minimum guard rejects it naturally.
+_GENERIC_MARKET_MODIFIERS = {
+    "emerging", "global", "growing", "leading", "major", "key", "top",
+    "developing", "developed", "changing", "evolving", "rising", "booming",
+}
+
+# Words that signal we've exited a market-name noun phrase when scanning
+# backward from "Market"/"Markets" in a narrative headline. Combined with
+# _NARRATIVE_LEADS (question/filler words) as the full stopper vocabulary for
+# extract_market_from_narrative_tail().
+_NARRATIVE_TAIL_STOPPERS = {
+    "in", "for", "of", "with", "and", "to", "is", "are", "was", "were",
+    "by", "as", "amid", "despite", "while", "after", "before", "through",
+    "via", "across", "into", "onto", "from", "over", "under", "toward",
+    "towards", "driving", "drives", "drove", "reshaping", "reshapes",
+    "fuels", "fueling", "fuel", "positioning", "positions", "built",
+    "builds", "shows", "showed", "leads", "led", "reveals", "revealed",
+    "signals", "signal", "brings", "brought", "means", "mean", "ahead",
+}
+
 
 def _clean_text(value: str) -> str:
     """Unicode-normalize, replace mojibake/exotic dashes, collapse whitespace."""
@@ -188,6 +215,9 @@ def _clean_text(value: str) -> str:
     text = unicodedata.normalize("NFKC", value)
     # Replacement char (mojibake, e.g. "2019 � 2030") and exotic dashes → "-"
     text = text.replace("�", "-").replace("–", "-").replace("—", "-")
+    # Curly apostrophe -> straight, so "India's" and "India's" match identically
+    # downstream (possessive-geography stripping, tokenizing).
+    text = text.replace("’", "'")
     return _WHITESPACE.sub(" ", text).strip()
 
 
@@ -275,21 +305,31 @@ def extract_market_from_title(title: str, geography_words: list[str] | None = No
     match = _FIRST_MARKET_WORD.match(text)
     if match:
         text = match.group(1)
-    # Drop leading geography phrases ("Bahrain Pectin Market" → "Pectin Market").
-    # Full-phrase prefix matching, longest first — never strips ordinary words
-    # that merely appear inside a geography name (e.g. the "New" of
-    # "New Energy Vehicle Market" survives even though "New Zealand" is known).
-    if geography_words:
-        phrases = sorted(
-            {_clean_text(g).lower() for g in geography_words if g},
-            key=len, reverse=True,
-        )
+    # Drop leading geography phrases ("Bahrain Pectin Market" → "Pectin Market")
+    # and generic scope modifiers ("Global Vegan Food Market" → "Vegan Food
+    # Market"). Full-phrase prefix matching, longest first — never strips
+    # ordinary words that merely appear inside a geography name (e.g. the
+    # "New" of "New Energy Vehicle Market" survives even though "New Zealand"
+    # is known). Also accepts a trailing possessive ("India's Sleep Market"),
+    # since that's how Ken's narrative article titles are commonly written.
+    phrases = sorted(
+        {_clean_text(g).lower() for g in (geography_words or []) if g}
+        | _GENERIC_MARKET_MODIFIERS,
+        key=len, reverse=True,
+    )
+    if phrases:
         stripped = True
         while stripped:
             stripped = False
             lowered = text.lower()
             for phrase in phrases:
-                if phrase and lowered.startswith(phrase + " "):
+                if not phrase:
+                    continue
+                if lowered.startswith(phrase + "'s "):
+                    text = text[len(phrase) + 2:].lstrip(" ,-")
+                    stripped = True
+                    break
+                if lowered.startswith(phrase + " "):
                     text = text[len(phrase):].lstrip(" ,-")
                     stripped = True
                     break
@@ -304,7 +344,17 @@ def extract_market_from_title(title: str, geography_words: list[str] | None = No
         return ""
     if words[0].lower().rstrip(",") in _NARRATIVE_LEADS:
         return ""
-    if words[0][0].isdigit() or words[0].startswith(("%", "$")):
+    # Reject a leading stat/figure ("8.96%", "$100M", "₹6.5 Lakh Crore ...",
+    # "USD 15+ Billion ..."). Checks the FIRST word only, deliberately —
+    # checking every word was tried and reverted: it also rejected
+    # legitimate alphanumeric market terms that start with a letter but
+    # contain a digit (K-12 Curriculum Market, P2P Lending Market, B2B
+    # Packaging Market, 3D Printing Market — all real, correct extractions
+    # broken by the broader check). A leading digit/currency signal is what
+    # marks "this is a statistic, not a market name"; a digit elsewhere in
+    # an established short code is not.
+    if (words[0].startswith(("%", "$", "₹", "€", "£")) or words[0][0].isdigit()
+            or words[0].lower() in _CURRENCY_CODES):
         return ""
     if "ken research" in lowered:
         return ""
@@ -312,13 +362,93 @@ def extract_market_from_title(title: str, geography_words: list[str] | None = No
     # "Benchmarking of Indonesia ... Market") — real market names don't
     # contain these. " in " is allowed only for short compound topics
     # ("AI in Medicine Market").
+    #
+    # "'s "/"-s " deliberately NOT in this list (removed 2026-07-10): before
+    # today's apostrophe normalization (curly ' -> straight '), this check
+    # was silently broken on curly-apostrophe titles (a Unicode mismatch —
+    # the check used straight ') and never actually fired on real data.
+    # Fixing the normalization made it start firing for real, which then
+    # incorrectly rejected legitimate possessive market names — "Women's
+    # Fertility Clinics Market" is a real, correct market name, not evidence
+    # of a narrative headline. The case it was meant to catch (a COMPANY's
+    # possessive signalling a story headline, e.g. "SunOpta's Strategic
+    # Shift Driving...") is still caught independently by " driving "/
+    # " driven " below — verified via the full test suite before removing.
     if any(tell in lowered for tell in (" of ", " for ", " with ", " by ",
-                                        "'s ", "-s ", " via ", " through ",
+                                        " via ", " through ",
                                         " driving ", " driven ")):
         return ""
     if " in " in lowered and len(words) > 5:
         return ""
+    # Position-aware possessive check (added 2026-07-10, replaces the
+    # removed blanket "'s " tell). A possessive belonging to the page's real
+    # subject sits at or near the front ("Women's Fertility Clinics Market",
+    # "India's Sleep Market" — 0 words precede it). A possessive appearing
+    # 2+ words in almost always means we're still inside a narrative
+    # sentence ("Global Publisher Cracks India's K-12 Curriculum Market" —
+    # "Cracks" is a verb, not part of the market name). Found via testing:
+    # this exact title passed every other guard and produced junk.
+    possessive_idx = next(
+        (i for i, w in enumerate(words) if w.lower().endswith("'s")), None
+    )
+    if possessive_idx is not None and possessive_idx >= 2:
+        return ""
     return text
+
+
+def extract_market_from_narrative_tail(
+    title: str, geography_words: list[str] | None = None
+) -> str:
+    """Recover a market name from a narrative-style headline where the
+    standard extraction fails because the market name sits mid-sentence
+    rather than at the start (e.g. "How Saudi Arabia's Logistics Market is
+    Evolving with Vision 2030").
+
+    Finds the LAST "market"/"markets" word in the title, then scans backward
+    from it for the nearest stopper — a colon, or a question/filler lead-in
+    word ("how", "why"...), or a preposition/verb ("in", "driving",
+    "fuels"...) — and takes everything after that stopper as the candidate
+    phrase. That candidate is then run through the SAME geography-stripping
+    and precision guards as extract_market_from_title, so this function can
+    never be looser than the standard path — it only starts scanning from a
+    different (later) point in the sentence.
+
+    FALLBACK ONLY: intended to be tried after extract_market_from_title
+    returns "" on both title and H1 — never call this first, it must not
+    override a successful strict extraction.
+
+    'How Saudi Arabia's Logistics Market is Evolving with Vision 2030'
+        -> 'Logistics Market'
+    'SunOpta's Strategic Shift Driving Global Vegan Food Market Growth'
+        -> 'Vegan Food Market'
+    'Autonomous Vehicle Adoption in Emerging Markets Through 2030'
+        -> ''  ('Emerging' is a generic modifier with no specific subject
+                behind it once stripped — correctly rejected, not invented)
+    """
+    text = _clean_text(title)
+    if not text:
+        return ""
+    # Unlike the strict path, don't truncate at the first colon/comma — in
+    # narrative headlines the market name is often AFTER it
+    # ("L&T's Order Book: Future of India's EPC Market"). Only drop a
+    # trailing " | Ken Research"-style suffix.
+    text = text.split("|")[0].strip()
+
+    matches = list(re.finditer(r"\bmarkets?\b", text, re.I))
+    if not matches:
+        return ""
+    head = text[: matches[-1].end()]
+    words = head.split()
+    if len(words) < 2:
+        return ""
+
+    stoppers = _NARRATIVE_LEADS | _NARRATIVE_TAIL_STOPPERS
+    cut_idx = 0
+    for i, w in enumerate(words[:-1]):  # never treat the market word itself as a stopper
+        if w.endswith(":") or w.rstrip(".,;:'\"").lower() in stoppers:
+            cut_idx = i + 1
+    tail = " ".join(words[cut_idx:])
+    return extract_market_from_title(tail, geography_words)
 
 
 def _depluralize(word: str) -> str:
