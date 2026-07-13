@@ -12,11 +12,15 @@ see relationship coverage matrix in source_of_truth/PHASE_2_FINAL_PRD.md):
   - same_market         two pages sharing a market entity
   - country_region      a country page <-> pages in its region
   - global_local        same market, one global-scoped page + one local page
-  - industry_market      a market entity -> its parent industry entity
   - report_article_support / case_study_support
                          article/case-study sharing a MARKET entity with a
                          report (industry+country alone is not enough — see
                          precision-first note below)
+
+The market -> parent industry hierarchy is NOT an edge type: it is entity
+metadata written to content_entities.parent_entity_id (see _market_parent_map).
+An earlier version stored it as self-loop 'industry_market' edges, which
+inflated relationship_edges and every page-to-page connectivity metric.
 
 same_industry is deliberately NOT built as raw page pairs: with industries up
 to ~100 pages wide, all-pairs would be thousands of low-value edges. Industry
@@ -44,6 +48,7 @@ import sqlite3
 import sys
 import time
 import uuid
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,7 +71,6 @@ CONFIDENCE = {
                                     # (broader signal than same_market — no subject-
                                     # level match, industry co-membership only)
     "global_local": 0.80,         # same market, global/local scope differs
-    "industry_market": 0.85,      # market -> parent industry, both from trusted extraction
     "report_article_support": 0.75,  # article shares market with a report
     "case_study_support": 0.75,      # case study shares market with a report
     "adjacent_market": 0.60,         # same industry, different market, high text similarity
@@ -115,6 +119,12 @@ class RunResult:
     edges: list[Edge] = field(default_factory=list)
     candidates_considered: int = 0
     skipped_hub_markets: list[str] = field(default_factory=list)
+    # market_entity_id -> parent industry_entity_id. This is entity-hierarchy
+    # metadata, NOT a page-to-page link, so it is written to
+    # content_entities.parent_entity_id — never to relationship_edges. (An
+    # earlier version stored it as self-loop 'industry_market' edges, which
+    # polluted the links table and every page-to-page connectivity metric.)
+    parent_updates: dict[str, str] = field(default_factory=dict)
 
 
 class RelationshipMappingAgent:
@@ -208,7 +218,10 @@ class RelationshipMappingAgent:
             self._country_region_edges(scope, node_industries, titles, subject_corpus)
         )
         result.edges.extend(self._global_local_edges(scope, node_markets))
-        result.edges.extend(self._industry_market_edges(node_entities))
+        # market -> parent industry is entity hierarchy, not a page link:
+        # collected here, written to content_entities.parent_entity_id, never
+        # emitted as an edge.
+        result.parent_updates = self._market_parent_map(node_entities)
         result.edges.extend(self._support_edges(nodes, node_markets))
         result.edges.extend(
             self._adjacent_market_edges(node_markets, node_industries, titles, subject_corpus)
@@ -515,33 +528,25 @@ class RelationshipMappingAgent:
                 out.setdefault(m, []).append(node_id)
         return out
 
-    def _industry_market_edges(self, node_entities) -> list[Edge]:
-        """Entity-to-entity edge: a market entity belongs to its industry
-        entity, when a page independently carries both (co-occurrence
-        evidence — never invented)."""
-        edges = []
-        seen = set()
-        for node_id, ents in node_entities.items():
+    @staticmethod
+    def _market_parent_map(node_entities) -> dict[str, str]:
+        """market_entity_id -> parent industry_entity_id.
+
+        Evidence: a page independently carries both a market and an industry
+        entity (co-occurrence — never invented). A market may co-occur with
+        more than one industry across pages; it takes its single most-frequent
+        industry, chosen deterministically. This hierarchy is written to
+        content_entities.parent_entity_id, NOT to relationship_edges: it
+        describes what a market IS, not a link between two pages.
+        """
+        counts: dict[str, Counter] = defaultdict(Counter)
+        for ents in node_entities.values():
             markets = [e for e in ents if e["entity_type"] == "market"]
             industries = [e for e in ents if e["entity_type"] == "industry"]
             for m in markets:
                 for ind in industries:
-                    key = (m["entity_id"], ind["entity_id"])
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    edges.append(Edge(
-                        source_node_id=node_id, target_node_id=node_id,
-                        relationship_type="industry_market",
-                        relationship_direction="source_to_target",
-                        confidence_score=CONFIDENCE["industry_market"],
-                        entity_overlap_score=1.0, geo_match_score=0.0,
-                        market_match_score=1.0,
-                        source_entity_id=m["entity_id"], target_entity_id=ind["entity_id"],
-                        reason=f"'{m['entity_name']}' co-occurs with industry "
-                               f"'{ind['entity_name']}' on this page",
-                    ))
-        return edges
+                    counts[m["entity_id"]][ind["entity_id"]] += 1
+        return {mid: c.most_common(1)[0][0] for mid, c in counts.items()}
 
     def _support_edges(self, nodes, node_markets) -> list[Edge]:
         """article/case_study -> report, ONLY when they share a market entity.
@@ -600,12 +605,15 @@ class RelationshipMappingAgent:
         elapsed = round(time.perf_counter() - started, 2)
         summary = self._summary(result, elapsed, dry_run)
         if not dry_run:
-            self._write_database(result.edges)
+            self._write_database(result.edges, result.parent_updates)
         summary["stale_edges_removed"] = self._stale_removed
+        summary["market_parents_set"] = len(result.parent_updates)
         return result, summary
 
-    def _write_database(self, edges: list[Edge]) -> None:
-        if not edges:
+    def _write_database(self, edges: list[Edge],
+                        parent_updates: dict[str, str] | None = None) -> None:
+        parent_updates = parent_updates or {}
+        if not edges and not parent_updates:
             return
         now = datetime.now(timezone.utc).isoformat()
         conn = sqlite3.connect(self.db_path, timeout=30)
@@ -664,6 +672,16 @@ class RelationshipMappingAgent:
                     "DELETE FROM relationship_edges WHERE edge_id=?", (edge_id,)
                 )
 
+            # Write market -> parent industry hierarchy to its designed home,
+            # content_entities.parent_entity_id. This is idempotent (same input
+            # -> same parent) and never touches relationship_edges.
+            for market_id, industry_id in parent_updates.items():
+                conn.execute(
+                    "UPDATE content_entities SET parent_entity_id=?, updated_at=? "
+                    "WHERE entity_id=? AND entity_type='market'",
+                    (industry_id, now, market_id),
+                )
+
             conn.execute(
                 """INSERT INTO entity_extraction_logs
                    (run_id, node_id, operation, status, entities_found,
@@ -698,7 +716,9 @@ class RelationshipMappingAgent:
                 "same_market": "both pages independently mapped to the same market entity",
                 "country_region": "region-scope page linked to local pages in that region",
                 "global_local": "same market, one page global-scope, one local-scope",
-                "industry_market": "entity-to-entity: market observed co-occurring with an industry",
+                "market_parent_industry": "NOT an edge — written to "
+                    "content_entities.parent_entity_id; market takes its most-"
+                    "frequent co-occurring industry as parent",
                 "report_article_support / case_study_support": "article/case-study "
                     "shares a market entity with a report (industry+country alone "
                     "is deliberately not enough — precision-first per project quality bar)",

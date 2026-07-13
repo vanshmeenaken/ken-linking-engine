@@ -7,3 +7,10 @@ pytest
 httpx
 requests
 beautifulsoup4
+
+# Google integrations (Search Console + GA4).
+# Only needed to run scripts/19_sync_gsc.py and scripts/20_sync_ga4.py; the
+# rest of the pipeline imports them lazily and runs fine without them.
+google-auth
+google-api-python-client
+google-analytics-data

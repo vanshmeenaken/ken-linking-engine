@@ -189,6 +189,23 @@
 
   .empty-msg { padding: 30px; text-align: center; color: var(--gray); }
   .loading { padding: 30px; text-align: center; color: var(--gray); }
+
+  /* Phase 2 — intelligence layer */
+  .section-heading {
+    font-size: 20px; margin: 34px 0 16px; padding-bottom: 8px;
+    border-bottom: 2px solid #e5e7eb; color: #111827;
+  }
+  .panel-note { font-size: 13px; color: var(--gray); line-height: 1.5; margin-top: 12px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+  }
+  .badge.high   { background: #fee2e2; color: #991b1b; }
+  .badge.medium { background: #fef3c7; color: #92400e; }
+  .badge.low    { background: #e5e7eb; color: #374151; }
+  .badge.type   { background: #dbeafe; color: #1e40af; }
+  .target-miss  { color: #b45309; font-weight: 600; }
+  .target-hit   { color: #047857; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -224,6 +241,62 @@
       <div class="loading">Loading…</div>
     </div>
   </div>
+
+  <!-- ══ Phase 2: Intelligence Layer ══════════════════════════════════ -->
+
+  <h2 class="section-heading">What The System Has Learned</h2>
+
+  <div class="stat-grid" id="intel-grid">
+    <div class="loading">Loading intelligence…</div>
+  </div>
+
+  <div class="panel-row">
+    <div class="panel">
+      <h2>Business Priority — Which Pages Are Worth Money</h2>
+      <div id="priority-bars"><div class="loading">Loading…</div></div>
+      <p class="panel-note" id="priority-note"></p>
+    </div>
+    <div class="panel">
+      <h2>Page Connections — How Pages Relate</h2>
+      <div id="reltype-bars"><div class="loading">Loading…</div></div>
+      <p class="panel-note" id="coverage-note"></p>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:24px;">
+    <h2>Google Data Connections</h2>
+    <div class="status-pills" id="integration-pills">
+      <div class="loading">Loading…</div>
+    </div>
+    <p class="panel-note" id="integration-note"></p>
+  </div>
+
+  <div class="table-panel" style="margin-bottom:24px;">
+    <h2>Fix-First List — Valuable Pages That Need Links</h2>
+    <p class="panel-note" style="margin:0 0 12px;">
+      High business-priority pages with an open problem. These are the pages
+      worth fixing first: they matter commercially <em>and</em> they are being
+      held back by something links can fix.
+    </p>
+    <div id="fixfirst-wrap"><div class="loading">Loading…</div></div>
+  </div>
+
+  <div class="table-panel" style="margin-bottom:24px;">
+    <h2>Page Connections — Look Up Any Page</h2>
+    <div class="filters">
+      <select id="rel-type-filter">
+        <option value="">All Connection Types</option>
+      </select>
+      <select id="rel-page-size">
+        <option value="25">Show 25</option>
+        <option value="50" selected>Show 50</option>
+        <option value="100">Show 100</option>
+      </select>
+    </div>
+    <div id="rel-wrap"><div class="loading">Loading…</div></div>
+  </div>
+
+  <h2 class="section-heading">Full Page Inventory</h2>
 
   <div class="table-panel">
     <h2>All Pages</h2>
@@ -475,12 +548,212 @@ document.getElementById("page-size").addEventListener("change", (e) => {
   loadPages();
 });
 
+// ══ Phase 2 — intelligence layer ═══════════════════════════════════════════
+
+const REL_LABELS = {
+  same_market: "Same market, different country",
+  adjacent_market: "Related market",
+  country_region: "Country ↔ its region",
+  global_local: "Global page ↔ local page",
+  report_article_support: "Article supports a report",
+  case_study_support: "Case study supports a report",
+};
+
+const OPP_LABELS = {
+  orphan_page: "No links pointing to it",
+  underlinked_page: "Too few links",
+  high_priority_underlinked: "Valuable but underlinked",
+  missing_relationships: "Not connected to any page",
+  missing_market_entity: "No market identified",
+  missing_geo_entity: "No country identified",
+  stale_metadata: "Missing title / description",
+  entity_low_confidence: "Uncertain classification",
+  global_local_gap: "Missing global/local pair",
+};
+
+async function loadIntelligence() {
+  const [stats, coverage, priority] = await Promise.all([
+    getJSON(`${API}/api/intelligence/stats`),
+    getJSON(`${API}/api/intelligence/relationship-coverage`),
+    getJSON(`${API}/api/intelligence/business-priority?top=1`),
+  ]);
+
+  const bands = stats.business_priority_bands || {};
+  const conn = coverage.page_to_page_connectivity;
+  const hitTarget = conn.pct >= conn.target_pct;
+
+  document.getElementById("intel-grid").innerHTML = `
+    <div class="stat-card good">
+      <div class="label">High-Value Pages</div>
+      <div class="value">${fmt(bands.High || 0)}</div>
+      <div class="sub">worth fixing first</div>
+    </div>
+    <div class="stat-card orphan">
+      <div class="label">Problems Found</div>
+      <div class="value">${fmt(stats.open_opportunities)}</div>
+      <div class="sub">fixable issues across all pages</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Page-to-Page Links</div>
+      <div class="value">${fmt(coverage.total_edges)}</div>
+      <div class="sub">real connections found</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Things Identified</div>
+      <div class="value">${fmt(stats.entities)}</div>
+      <div class="sub">markets, countries, industries</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">AI-Readiness</div>
+      <div class="value">${stats.avg_ai_readiness_score ?? "—"}</div>
+      <div class="sub">average, out of 1.0</div>
+    </div>
+  `;
+
+  // business priority bars
+  const order = ["High", "Medium", "Low"];
+  const maxBand = Math.max(...order.map(b => bands[b] || 0), 1);
+  document.getElementById("priority-bars").innerHTML = order.map(b => `
+    <div class="bar-row">
+      <div class="name">${b}</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:${((bands[b] || 0) / maxBand * 100).toFixed(0)}%;
+             background:${b === "High" ? "var(--red, #dc2626)" : b === "Medium" ? "#f59e0b" : "#9ca3af"};"></div>
+      </div>
+      <div class="count">${fmt(bands[b] || 0)}</div>
+    </div>
+  `).join("");
+  document.getElementById("priority-note").textContent =
+    "How commercially valuable each page is. Reports rank above articles; " +
+    "strategic industries and countries rank higher.";
+
+  // relationship type bars
+  const types = coverage.edges_by_type || {};
+  const maxType = Math.max(...Object.values(types), 1);
+  document.getElementById("reltype-bars").innerHTML =
+    Object.entries(types).map(([t, n]) => `
+      <div class="bar-row">
+        <div class="name" title="${t}">${REL_LABELS[t] || t}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${(n / maxType * 100).toFixed(0)}%; background:var(--green);"></div>
+        </div>
+        <div class="count">${n}</div>
+      </div>
+    `).join("") || `<div class="empty-msg">No connections found yet.</div>`;
+
+  document.getElementById("coverage-note").innerHTML =
+    `<strong>${conn.count} of ${coverage.active_pages} pages (` +
+    `<span class="${hitTarget ? "target-hit" : "target-miss"}">${conn.pct}%</span>)` +
+    `</strong> are linked to at least one other page. Target is ${conn.target_pct}%. ` +
+    `This is low mainly because we hold 500 of Ken's ~42,000 pages — most pages' ` +
+    `real siblings are not in the sample yet.`;
+}
+
+async function loadFixFirst() {
+  const data = await getJSON(`${API}/api/opportunities/high-priority?limit=25`);
+  const wrap = document.getElementById("fixfirst-wrap");
+  if (!data.count) {
+    wrap.innerHTML = `<div class="empty-msg">No high-priority problems found.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr><th>Page</th><th>Problem</th><th>Priority</th><th>Links In</th></tr>
+      </thead>
+      <tbody>
+        ${data.opportunities.map(o => `
+          <tr>
+            <td><a href="${o.url}" target="_blank" rel="noopener">${o.title || o.url}</a></td>
+            <td>${OPP_LABELS[o.opportunity_type] || o.opportunity_type}</td>
+            <td><span class="badge ${(o.priority || "low").toLowerCase()}">${o.priority || "—"}</span></td>
+            <td>${fmt(o.internal_links_in)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+async function loadRelationships() {
+  const type = document.getElementById("rel-type-filter").value;
+  const limit = document.getElementById("rel-page-size").value;
+  const q = new URLSearchParams({ limit });
+  if (type) q.set("relationship_type", type);
+  const data = await getJSON(`${API}/api/relationships?${q}`);
+  const wrap = document.getElementById("rel-wrap");
+  if (!data.total) {
+    wrap.innerHTML = `<div class="empty-msg">No connections match this filter.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr><th>This Page</th><th>Connects To</th><th>Why</th><th>Confidence</th></tr>
+      </thead>
+      <tbody>
+        ${data.relationships.map(r => `
+          <tr>
+            <td><a href="${r.source_url}" target="_blank" rel="noopener">${r.source_title || r.source_url}</a></td>
+            <td><a href="${r.target_url}" target="_blank" rel="noopener">${r.target_title || r.target_url}</a></td>
+            <td><span class="badge type">${REL_LABELS[r.relationship_type] || r.relationship_type}</span></td>
+            <td>${(r.confidence_score * 100).toFixed(0)}%</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+    <p class="panel-note">Showing ${data.relationships.length} of ${data.total} connections.</p>
+  `;
+}
+
+async function loadRelTypeFilter() {
+  const data = await getJSON(`${API}/api/relationships/types`);
+  const sel = document.getElementById("rel-type-filter");
+  data.types.forEach(t => {
+    const opt = document.createElement("option");
+    opt.value = t.relationship_type;
+    opt.textContent = `${REL_LABELS[t.relationship_type] || t.relationship_type} (${t.edge_count})`;
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById("rel-type-filter").addEventListener("change", loadRelationships);
+document.getElementById("rel-page-size").addEventListener("change", loadRelationships);
+
+async function loadIntegrations() {
+  const s = await getJSON(`${API}/api/integrations/status`);
+  const pill = (name, d) => `
+    <div class="pill ${d.has_data ? "well" : "orphan"}">
+      <span class="n">${d.has_data ? fmt(d.pages_matched) : "—"}</span>
+      ${name}${d.has_data ? " pages with data" : " not connected"}
+    </div>`;
+  document.getElementById("integration-pills").innerHTML =
+    pill("Google Search Console", s.gsc) + pill("Google Analytics", s.ga4);
+
+  const gscOn = s.gsc.has_data, ga4On = s.ga4.has_data;
+  document.getElementById("integration-note").innerHTML = (gscOn || ga4On)
+    ? `Last synced: ${(s.gsc.last_synced || s.ga4.last_synced || "").slice(0, 16).replace("T", " ")}. ` +
+      `Search Console tells us which pages are close to page 1 of Google. ` +
+      `Analytics tells us which pages actually generate enquiries.`
+    : `Not connected yet — waiting on account access. Once credentials are added, ` +
+      `page scores will be based on <strong>real search rankings and real visitor ` +
+      `behaviour</strong> instead of estimates. Everything else on this dashboard ` +
+      `works without them.`;
+}
+
 async function loadEverything() {
-  await Promise.all([loadStats(), loadPages()]);
+  await Promise.all([
+    loadStats(),
+    loadPages(),
+    loadIntelligence(),
+    loadIntegrations(),
+    loadFixFirst(),
+    loadRelationships(),
+  ]);
 }
 
 (async function init() {
-  await loadFilterOptions();
+  await Promise.all([loadFilterOptions(), loadRelTypeFilter()]);
   await loadEverything();
 })();
 </script>

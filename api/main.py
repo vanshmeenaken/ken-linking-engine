@@ -563,6 +563,619 @@ def get_entity_coverage():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Phase 2 — Relationship, opportunity & intelligence endpoints (Day 9)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── 15. Relationship types summary ── static path, defined before siblings ───
+
+@app.get("/api/relationships/types")
+def get_relationship_types():
+    """Every relationship type in the graph with edge count and average
+    confidence, most common first."""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT relationship_type, COUNT(*) AS edge_count,
+                  ROUND(AVG(confidence_score), 3) AS avg_confidence
+           FROM relationship_edges
+           GROUP BY relationship_type
+           ORDER BY edge_count DESC"""
+    ).fetchall()
+    conn.close()
+    return {"count": len(rows), "types": [dict(r) for r in rows]}
+
+
+# ── 16. Pending review queue ─────────────────────────────────────────────────
+
+@app.get("/api/relationships/pending")
+def get_pending_relationships(
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Relationship edges awaiting human review (status='pending'),
+    least confident first — the ones most worth a look."""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT e.edge_id, e.relationship_type, e.confidence_score,
+                  s.url AS source_url, t.url AS target_url
+           FROM relationship_edges e
+           JOIN content_nodes s ON s.node_id = e.source_node_id
+           JOIN content_nodes t ON t.node_id = e.target_node_id
+           WHERE e.status = 'pending'
+           ORDER BY e.confidence_score ASC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return {"count": len(rows), "pending": [dict(r) for r in rows]}
+
+
+# ── 17. List relationships (paginated, filterable) ───────────────────────────
+
+@app.get("/api/relationships")
+def list_relationships(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    relationship_type: Optional[str] = Query(None, description="e.g. same_market, adjacent_market, global_local"),
+    status: Optional[str] = Query(None, description="pending | approved | rejected"),
+    min_confidence: float = Query(0.0, ge=0.0, le=1.0),
+):
+    """List relationship edges with source/target page context, highest
+    confidence first. Filterable by type, review status and confidence floor."""
+    conn = get_db()
+    where = ["e.confidence_score >= ?"]
+    params: list = [min_confidence]
+    if relationship_type:
+        where.append("LOWER(e.relationship_type) = LOWER(?)")
+        params.append(relationship_type)
+    if status:
+        where.append("LOWER(e.status) = LOWER(?)")
+        params.append(status)
+    where_sql = "WHERE " + " AND ".join(where)
+
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM relationship_edges e {where_sql}", params
+    ).fetchone()[0]
+    rows = conn.execute(
+        f"""SELECT e.edge_id, e.relationship_type, e.relationship_direction,
+                   e.confidence_score, e.semantic_similarity_score,
+                   e.entity_overlap_score, e.geo_match_score,
+                   e.market_match_score, e.status, e.created_by,
+                   s.node_id AS source_node_id, s.url AS source_url,
+                   s.title AS source_title,
+                   t.node_id AS target_node_id, t.url AS target_url,
+                   t.title AS target_title
+            FROM relationship_edges e
+            JOIN content_nodes s ON s.node_id = e.source_node_id
+            JOIN content_nodes t ON t.node_id = e.target_node_id
+            {where_sql}
+            ORDER BY e.confidence_score DESC
+            LIMIT ? OFFSET ?""",
+        params + [limit, skip],
+    ).fetchall()
+    conn.close()
+    return {"total": total, "skip": skip, "limit": limit,
+            "relationships": [dict(r) for r in rows]}
+
+
+# ── 18. Relationships of one page ─────────────────────────────────────────────
+
+@app.get("/api/pages/{node_id}/relationships")
+def get_page_relationships(node_id: str):
+    """Every relationship edge touching one page, in either direction.
+    Each edge is annotated with the OTHER page's details plus this page's
+    role (source or target). 404 if the page is unknown."""
+    conn = get_db()
+    page = conn.execute(
+        "SELECT node_id, url, title FROM content_nodes WHERE node_id = ?",
+        (node_id,),
+    ).fetchone()
+    if page is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Page '{node_id}' not found")
+    # Exclude self-loop edges (source_node_id == target_node_id). Those are
+    # industry_market edges that anchor an entity-to-entity relationship on a
+    # single page; they are page metadata, not links to OTHER pages, and would
+    # otherwise show up here as a page "related to itself". The page's own
+    # entity relationships are available via /api/pages/{node_id}/entities.
+    rows = conn.execute(
+        """SELECT e.edge_id, e.relationship_type, e.relationship_direction,
+                  e.confidence_score, e.status,
+                  CASE WHEN e.source_node_id = ? THEN 'source' ELSE 'target' END
+                      AS this_page_role,
+                  o.node_id AS other_node_id, o.url AS other_url,
+                  o.title AS other_title, o.content_type AS other_content_type
+           FROM relationship_edges e
+           JOIN content_nodes o
+             ON o.node_id = CASE WHEN e.source_node_id = ?
+                                 THEN e.target_node_id ELSE e.source_node_id END
+           WHERE (e.source_node_id = ? OR e.target_node_id = ?)
+             AND e.source_node_id != e.target_node_id
+           ORDER BY e.confidence_score DESC""",
+        (node_id, node_id, node_id, node_id),
+    ).fetchall()
+    conn.close()
+    return {**dict(page), "relationship_count": len(rows),
+            "relationships": [dict(r) for r in rows]}
+
+
+# ── 19. Relationships of one entity ──────────────────────────────────────────
+
+@app.get("/api/entities/{entity_id}/relationships")
+def get_entity_relationships(entity_id: str):
+    """Every relationship edge anchored to one entity (as source or target
+    entity). Note: only ~87% of edges carry entity anchors — purely
+    page-level edges won't appear here. 404 if the entity is unknown."""
+    conn = get_db()
+    entity = conn.execute(
+        "SELECT entity_id, entity_name, entity_type FROM content_entities "
+        "WHERE entity_id = ?", (entity_id,),
+    ).fetchone()
+    if entity is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Entity '{entity_id}' not found")
+    rows = conn.execute(
+        """SELECT e.edge_id, e.relationship_type, e.confidence_score, e.status,
+                  s.url AS source_url, t.url AS target_url
+           FROM relationship_edges e
+           JOIN content_nodes s ON s.node_id = e.source_node_id
+           JOIN content_nodes t ON t.node_id = e.target_node_id
+           WHERE e.source_entity_id = ? OR e.target_entity_id = ?
+           ORDER BY e.confidence_score DESC""",
+        (entity_id, entity_id),
+    ).fetchall()
+    conn.close()
+    return {**dict(entity), "relationship_count": len(rows),
+            "relationships": [dict(r) for r in rows]}
+
+
+# ── 20. SEO opportunities: orphans ── static paths before /{...} siblings ────
+
+@app.get("/api/opportunities/orphans")
+def get_opportunity_orphans(limit: int = Query(100, ge=1, le=500)):
+    """Orphan-page opportunities (no incoming links at all), highest
+    business-score first — the classic recovery list."""
+    return _list_opportunities_filtered(
+        opportunity_types=("orphan_page",), limit=limit)
+
+
+# ── 21. SEO opportunities: underlinked ───────────────────────────────────────
+
+@app.get("/api/opportunities/underlinked")
+def get_opportunity_underlinked(limit: int = Query(100, ge=1, le=500)):
+    """Underlinked-page opportunities, including the high-priority-underlinked
+    class (commercial pages starving for links)."""
+    return _list_opportunities_filtered(
+        opportunity_types=("underlinked_page", "high_priority_underlinked"),
+        limit=limit)
+
+
+# ── 22. SEO opportunities: the gold list ─────────────────────────────────────
+
+@app.get("/api/opportunities/high-priority")
+def get_opportunity_high_priority(limit: int = Query(100, ge=1, le=500)):
+    """The fix-first list: open opportunities on pages whose business
+    priority is High — valuable AND broken. This is the queue the Phase 3
+    recommendation engine will work through first."""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT o.opportunity_id, o.opportunity_type, o.priority, o.reason,
+                  o.seo_score, o.business_score, o.status,
+                  n.node_id, n.url, n.title, n.content_type,
+                  n.business_priority, n.search_opportunity_score,
+                  n.internal_links_in
+           FROM seo_opportunities o
+           JOIN content_nodes n ON n.node_id = o.node_id
+           WHERE o.status = 'open' AND n.business_priority = 'High'
+           ORDER BY o.business_score DESC, o.seo_score DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return {"count": len(rows), "opportunities": [dict(r) for r in rows]}
+
+
+def _list_opportunities_filtered(opportunity_types: tuple, limit: int):
+    """Shared query for the orphan/underlinked shortcut endpoints."""
+    conn = get_db()
+    placeholders = ",".join("?" * len(opportunity_types))
+    rows = conn.execute(
+        f"""SELECT o.opportunity_id, o.opportunity_type, o.priority, o.reason,
+                   o.seo_score, o.business_score, o.status,
+                   n.node_id, n.url, n.title, n.business_priority,
+                   n.internal_links_in
+            FROM seo_opportunities o
+            JOIN content_nodes n ON n.node_id = o.node_id
+            WHERE o.status = 'open' AND o.opportunity_type IN ({placeholders})
+            ORDER BY o.business_score DESC, o.seo_score DESC
+            LIMIT ?""",
+        (*opportunity_types, limit),
+    ).fetchall()
+    conn.close()
+    return {"count": len(rows), "opportunities": [dict(r) for r in rows]}
+
+
+# ── 23. List SEO opportunities (paginated, filterable) ───────────────────────
+
+@app.get("/api/opportunities")
+def list_opportunities(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    opportunity_type: Optional[str] = Query(None, description="e.g. orphan_page, missing_relationships"),
+    priority: Optional[str] = Query(None, description="high | medium | low"),
+    status: Optional[str] = Query(None, description="open | resolved | dismissed"),
+):
+    """List SEO opportunities with page context, most valuable first.
+    Filterable by type, priority and status."""
+    conn = get_db()
+    where, params = [], []
+    if opportunity_type:
+        where.append("LOWER(o.opportunity_type) = LOWER(?)")
+        params.append(opportunity_type)
+    if priority:
+        where.append("LOWER(o.priority) = LOWER(?)")
+        params.append(priority)
+    if status:
+        where.append("LOWER(o.status) = LOWER(?)")
+        params.append(status)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM seo_opportunities o {where_sql}", params
+    ).fetchone()[0]
+    rows = conn.execute(
+        f"""SELECT o.opportunity_id, o.node_id, o.opportunity_type, o.priority,
+                   o.reason, o.evidence, o.seo_score, o.business_score,
+                   o.status, n.url, n.title, n.business_priority
+            FROM seo_opportunities o
+            JOIN content_nodes n ON n.node_id = o.node_id
+            {where_sql}
+            ORDER BY o.business_score DESC, o.seo_score DESC
+            LIMIT ? OFFSET ?""",
+        params + [limit, skip],
+    ).fetchall()
+    conn.close()
+    return {"total": total, "skip": skip, "limit": limit,
+            "opportunities": [dict(r) for r in rows]}
+
+
+# ── 24. Intelligence: overall stats ──────────────────────────────────────────
+
+@app.get("/api/intelligence/stats")
+def get_intelligence_stats():
+    """One-call summary of the whole intelligence layer: entities, mappings,
+    relationship edges, opportunities and Phase 2 scores. The dashboard's
+    top-line numbers."""
+    conn = get_db()
+    active = conn.execute(
+        "SELECT COUNT(*) FROM content_nodes WHERE status='active'"
+    ).fetchone()[0]
+    entities = conn.execute("SELECT COUNT(*) FROM content_entities").fetchone()[0]
+    mappings = conn.execute(
+        "SELECT COUNT(*) FROM node_entities WHERE status != 'rejected'"
+    ).fetchone()[0]
+    edges = conn.execute("SELECT COUNT(*) FROM relationship_edges").fetchone()[0]
+    open_opps = conn.execute(
+        "SELECT COUNT(*) FROM seo_opportunities WHERE status='open'"
+    ).fetchone()[0]
+    biz = {
+        row["business_priority"]: row["n"]
+        for row in conn.execute(
+            """SELECT business_priority, COUNT(*) AS n FROM content_nodes
+               WHERE status='active' AND business_priority IS NOT NULL
+               GROUP BY business_priority"""
+        )
+    }
+    intent = {
+        row["intent_stage"]: row["n"]
+        for row in conn.execute(
+            """SELECT intent_stage, COUNT(*) AS n FROM content_nodes
+               WHERE status='active' AND intent_stage IS NOT NULL
+               GROUP BY intent_stage"""
+        )
+    }
+    avg_ai = conn.execute(
+        """SELECT ROUND(AVG(ai_readiness_score), 3) FROM content_nodes
+           WHERE status='active' AND ai_readiness_score IS NOT NULL"""
+    ).fetchone()[0]
+    conn.close()
+    return {
+        "active_pages": active,
+        "entities": entities,
+        "page_entity_mappings": mappings,
+        "relationship_edges": edges,
+        "open_opportunities": open_opps,
+        "business_priority_bands": biz,
+        "intent_stages": intent,
+        "avg_ai_readiness_score": avg_ai,
+    }
+
+
+# ── 25. Intelligence: relationship coverage ──────────────────────────────────
+
+@app.get("/api/intelligence/relationship-coverage")
+def get_relationship_coverage():
+    """How connected the graph is: share of active pages linked to at least
+    one OTHER page (the metric that matters for internal linking), judged
+    against the Phase 2 70% target.
+
+    relationship_edges holds only genuine page-to-page edges. Entity hierarchy
+    (a market's parent industry) lives in content_entities.parent_entity_id,
+    not here. `self_loop_edges` is a canary that must stay 0 — a non-zero value
+    means page-scoped entity facts have leaked back into the links table.
+    """
+    conn = get_db()
+    active = conn.execute(
+        "SELECT COUNT(*) FROM content_nodes WHERE status='active'"
+    ).fetchone()[0]
+    connected = conn.execute(
+        """SELECT COUNT(DISTINCT n.node_id) FROM content_nodes n
+           JOIN relationship_edges e
+             ON e.source_node_id = n.node_id OR e.target_node_id = n.node_id
+           WHERE n.status = 'active'
+             AND e.source_node_id != e.target_node_id"""
+    ).fetchone()[0]
+    by_type = {
+        row["relationship_type"]: row["n"]
+        for row in conn.execute(
+            "SELECT relationship_type, COUNT(*) AS n FROM relationship_edges "
+            "GROUP BY relationship_type ORDER BY n DESC"
+        )
+    }
+    self_loops = conn.execute(
+        "SELECT COUNT(*) FROM relationship_edges "
+        "WHERE source_node_id = target_node_id"
+    ).fetchone()[0]
+    by_status = {
+        row["status"]: row["n"]
+        for row in conn.execute(
+            "SELECT status, COUNT(*) AS n FROM relationship_edges GROUP BY status"
+        )
+    }
+    conf = conn.execute(
+        """SELECT ROUND(AVG(confidence_score),3) AS avg,
+                  ROUND(MIN(confidence_score),3) AS min,
+                  ROUND(MAX(confidence_score),3) AS max
+           FROM relationship_edges"""
+    ).fetchone()
+    conn.close()
+    pct = round(100.0 * connected / active, 1) if active else 0.0
+    return {
+        "active_pages": active,
+        "page_to_page_connectivity": {
+            "count": connected, "pct": pct, "target_pct": 70.0,
+            "note": "pages linked to at least one other page. Low on the 500-"
+                    "page sample because most pages' real siblings (same market, "
+                    "other geographies) are not in the sample; rises with the "
+                    "full catalog.",
+        },
+        "total_edges": sum(by_type.values()),
+        "self_loop_edges": self_loops,  # canary: must be 0
+        "edges_by_type": by_type,
+        "edges_by_status": by_status,
+        "confidence": dict(conf),
+    }
+
+
+# ── 26. Intelligence: global/local segmentation ──────────────────────────────
+
+@app.get("/api/intelligence/global-local")
+def get_global_local():
+    """Global vs local segmentation of active pages, plus the global_local
+    relationship pairs found so far (a global page linked to its country
+    versions)."""
+    conn = get_db()
+    segmentation = {
+        row["global_or_local"]: row["n"]
+        for row in conn.execute(
+            """SELECT COALESCE(NULLIF(global_or_local,''),'unknown') AS global_or_local,
+                      COUNT(*) AS n
+               FROM content_nodes WHERE status='active'
+               GROUP BY global_or_local"""
+        )
+    }
+    pairs = conn.execute(
+        """SELECT e.edge_id, e.confidence_score,
+                  s.url AS global_url, t.url AS local_url
+           FROM relationship_edges e
+           JOIN content_nodes s ON s.node_id = e.source_node_id
+           JOIN content_nodes t ON t.node_id = e.target_node_id
+           WHERE e.relationship_type = 'global_local'
+           ORDER BY e.confidence_score DESC"""
+    ).fetchall()
+    conn.close()
+    return {"segmentation": segmentation,
+            "global_local_pairs": [dict(r) for r in pairs],
+            "pair_count": len(pairs)}
+
+
+# ── 27. Intelligence: business priority breakdown ────────────────────────────
+
+@app.get("/api/intelligence/business-priority")
+def get_business_priority(
+    top: int = Query(20, ge=1, le=100, description="How many top-priority pages to include"),
+):
+    """Business-priority view: band counts, band-by-content-type matrix, and
+    the top High-priority pages with their opportunity flags — the pages
+    leadership should care about most."""
+    conn = get_db()
+    bands = {
+        row["business_priority"]: row["n"]
+        for row in conn.execute(
+            """SELECT business_priority, COUNT(*) AS n FROM content_nodes
+               WHERE status='active' AND business_priority IS NOT NULL
+               GROUP BY business_priority"""
+        )
+    }
+    by_content_type: dict = {}
+    for row in conn.execute(
+        """SELECT content_type, business_priority, COUNT(*) AS n
+           FROM content_nodes
+           WHERE status='active' AND business_priority IS NOT NULL
+           GROUP BY content_type, business_priority"""
+    ):
+        by_content_type.setdefault(row["content_type"], {})[row["business_priority"]] = row["n"]
+    top_pages = conn.execute(
+        """SELECT n.node_id, n.url, n.title, n.content_type,
+                  n.business_priority, n.page_authority_score,
+                  n.search_opportunity_score, n.internal_links_in,
+                  COUNT(o.opportunity_id) AS open_opportunities
+           FROM content_nodes n
+           LEFT JOIN seo_opportunities o
+                  ON o.node_id = n.node_id AND o.status = 'open'
+           WHERE n.status='active' AND n.business_priority = 'High'
+           GROUP BY n.node_id
+           ORDER BY n.page_authority_score DESC
+           LIMIT ?""",
+        (top,),
+    ).fetchall()
+    conn.close()
+    return {"bands": bands, "by_content_type": by_content_type,
+            "top_high_priority_pages": [dict(r) for r in top_pages]}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Phase 2 — Google integrations (GSC / GA4)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── 28. Integration status ───────────────────────────────────────────────────
+
+@app.get("/api/integrations/status")
+def get_integrations_status():
+    """Whether Search Console and GA4 are connected, and what has been synced.
+
+    Reports honestly when a source has no data yet: `connected: false` means
+    credentials are not configured or no sync has run — not that Ken has no
+    search traffic.
+    """
+    from config.settings import (GA4_PROPERTY_ID, GSC_SITE_URL,
+                                 google_credentials_available)
+    conn = get_db()
+    out = {}
+    for source in ("gsc", "ga4"):
+        row = conn.execute(
+            """SELECT COUNT(*) AS rows,
+                      COUNT(DISTINCT node_id) AS pages_matched,
+                      MAX(date_range) AS latest_window,
+                      MAX(created_at) AS last_synced
+               FROM integration_placeholders
+               WHERE source = ? AND status = 'matched'""",
+            (source,),
+        ).fetchone()
+        unmatched = conn.execute(
+            "SELECT COUNT(DISTINCT url) FROM integration_placeholders "
+            "WHERE source = ? AND status = 'unmatched'",
+            (source,),
+        ).fetchone()[0]
+        out[source] = {
+            "has_data": bool(row["rows"]),
+            "metric_rows": row["rows"],
+            "pages_matched": row["pages_matched"],
+            "pages_not_in_inventory": unmatched,
+            "latest_window": row["latest_window"],
+            "last_synced": row["last_synced"],
+        }
+    conn.close()
+    out["credentials_configured"] = google_credentials_available()
+    out["gsc_property"] = GSC_SITE_URL
+    out["ga4_property"] = GA4_PROPERTY_ID or None
+    return out
+
+
+# ── 29. Search performance for one page ──────────────────────────────────────
+
+@app.get("/api/pages/{node_id}/search-performance")
+def get_page_search_performance(node_id: str):
+    """Google Search Console metrics for one page (clicks, impressions, CTR,
+    average position), plus whether it sits in striking distance (positions
+    4-20), where an internal link has the most leverage.
+
+    Returns has_data=false rather than 404 when GSC has not been synced —
+    the page exists, the data does not.
+    """
+    from config.settings import STRIKING_DISTANCE_MAX, STRIKING_DISTANCE_MIN
+    conn = get_db()
+    page = conn.execute(
+        "SELECT node_id, url, title FROM content_nodes WHERE node_id = ?",
+        (node_id,),
+    ).fetchone()
+    if page is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Page '{node_id}' not found")
+    rows = conn.execute(
+        """SELECT metric_name, metric_value, date_range
+           FROM integration_placeholders
+           WHERE source='gsc' AND node_id=? AND status='matched'
+           ORDER BY date_range DESC""",
+        (node_id,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return {**dict(page), "has_data": False,
+                "note": "No Search Console data. Run scripts/19_sync_gsc.py "
+                        "(needs credentials)."}
+    window = rows[0]["date_range"]
+    metrics = {r["metric_name"]: r["metric_value"]
+               for r in rows if r["date_range"] == window}
+    position = metrics.get("position")
+    return {
+        **dict(page),
+        "has_data": True,
+        "date_range": window,
+        "clicks": metrics.get("clicks"),
+        "impressions": metrics.get("impressions"),
+        "ctr": metrics.get("ctr"),
+        "position": position,
+        "in_striking_distance": (
+            position is not None
+            and STRIKING_DISTANCE_MIN <= position <= STRIKING_DISTANCE_MAX
+        ),
+    }
+
+
+# ── 30. Striking-distance pages: the GSC-driven priority list ────────────────
+
+@app.get("/api/opportunities/striking-distance")
+def get_striking_distance_pages(
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Pages ranking 4-20 in Google, highest impressions first.
+
+    Master PRD 11.3: these gain the most from internal links — close enough to
+    page 1 that a push moves them, far enough that the traffic gain is large.
+    Combined with business_priority, this is the highest-ROI target list in the
+    whole system.
+
+    Empty with has_data=false until Search Console is synced.
+    """
+    from config.settings import STRIKING_DISTANCE_MAX, STRIKING_DISTANCE_MIN
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT n.node_id, n.url, n.title, n.business_priority,
+                  n.internal_links_in, n.page_authority_score,
+                  MAX(CASE WHEN p.metric_name='position'    THEN p.metric_value END) AS position,
+                  MAX(CASE WHEN p.metric_name='impressions' THEN p.metric_value END) AS impressions,
+                  MAX(CASE WHEN p.metric_name='clicks'      THEN p.metric_value END) AS clicks,
+                  MAX(CASE WHEN p.metric_name='ctr'         THEN p.metric_value END) AS ctr
+           FROM integration_placeholders p
+           JOIN content_nodes n ON n.node_id = p.node_id
+           WHERE p.source='gsc' AND p.status='matched' AND n.status='active'
+           GROUP BY n.node_id
+           HAVING position BETWEEN ? AND ?
+           ORDER BY impressions DESC
+           LIMIT ?""",
+        (STRIKING_DISTANCE_MIN, STRIKING_DISTANCE_MAX, limit),
+    ).fetchall()
+    conn.close()
+    return {
+        "has_data": bool(rows),
+        "count": len(rows),
+        "position_range": [STRIKING_DISTANCE_MIN, STRIKING_DISTANCE_MAX],
+        "pages": [dict(r) for r in rows],
+        "note": None if rows else
+                "No Search Console data yet. Run scripts/19_sync_gsc.py.",
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Phase 2 — SEO validation endpoint (Agent 10, master PRD §29.2)
 # ═════════════════════════════════════════════════════════════════════════════
 

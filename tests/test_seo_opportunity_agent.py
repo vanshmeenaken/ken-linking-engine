@@ -133,9 +133,15 @@ def test_stale_metadata_flagged(tmp_path):
 
 
 def test_clean_page_has_no_opportunities(tmp_path):
+    # Both pages are clean AND genuinely linked to each other. A page-to-page
+    # edge is required here: a self-loop edge ("n1","n1") is a page-scoped
+    # entity fact, not a link, and no longer suppresses missing_relationships.
     db = _make_db(tmp_path, [
         {"node_id": "n1", "orphan_status": "well_linked", "internal_links_in": 8},
-    ], entities=[("n1", "market", 0.9), ("n1", "country", 0.9)], edges=[("n1", "n1")])
+        {"node_id": "n2", "orphan_status": "well_linked", "internal_links_in": 8},
+    ], entities=[("n1", "market", 0.9), ("n1", "country", 0.9),
+                 ("n2", "market", 0.9), ("n2", "country", 0.9)],
+       edges=[("n1", "n2")])
     opps, _ = SEOOpportunityAgent(db).run(dry_run=True)
     assert len(opps) == 0
 
@@ -155,9 +161,14 @@ def test_search_opportunity_score_is_max_weight(tmp_path):
 
 
 def test_idempotent_rerun(tmp_path):
+    # n1 is an orphan but IS genuinely linked to n2, so its only opportunity
+    # is orphan_page. n2 is clean. Running twice must not duplicate rows.
     db = _make_db(tmp_path, [
         {"node_id": "n1", "orphan_status": "orphan", "internal_links_in": 0},
-    ], entities=[("n1", "market", 0.9), ("n1", "country", 0.9)], edges=[("n1", "n1")])
+        {"node_id": "n2", "orphan_status": "well_linked", "internal_links_in": 8},
+    ], entities=[("n1", "market", 0.9), ("n1", "country", 0.9),
+                 ("n2", "market", 0.9), ("n2", "country", 0.9)],
+       edges=[("n1", "n2")])
     SEOOpportunityAgent(db).run(dry_run=False)
     SEOOpportunityAgent(db).run(dry_run=False)
     conn = sqlite3.connect(db)

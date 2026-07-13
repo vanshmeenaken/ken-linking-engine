@@ -33,7 +33,7 @@ def _make_db(tmp_path, nodes, entities):
             status TEXT DEFAULT 'active');
         CREATE TABLE content_entities (
             entity_id TEXT PRIMARY KEY, entity_name TEXT, entity_type TEXT,
-            normalized_name TEXT, parent_entity_id TEXT);
+            normalized_name TEXT, parent_entity_id TEXT, updated_at TEXT);
         CREATE TABLE node_entities (
             node_entity_id TEXT PRIMARY KEY, node_id TEXT, entity_id TEXT,
             entity_role TEXT, status TEXT DEFAULT 'extracted');
@@ -80,7 +80,9 @@ def _make_db(tmp_path, nodes, entities):
             eid = f"ent-{i}"
             entity_ids[key] = eid
             conn.execute(
-                "INSERT INTO content_entities VALUES (?,?,?,?,NULL)",
+                "INSERT INTO content_entities "
+                "(entity_id, entity_name, entity_type, normalized_name) "
+                "VALUES (?,?,?,?)",
                 (eid, ename, etype, ename.lower()),
             )
         conn.execute(
@@ -261,7 +263,14 @@ def test_global_local_edge_requires_same_market_and_different_scope(tmp_path):
     assert len(gl) == 1
 
 
-def test_industry_market_edge_from_cooccurrence(tmp_path):
+def test_market_industry_cooccurrence_sets_parent_not_an_edge(tmp_path):
+    # A market co-occurring with an industry is entity HIERARCHY, not a page
+    # link. It must be written to content_entities.parent_entity_id and must
+    # NOT produce a relationship_edges row.
+    #
+    # Regression: this was previously emitted as a self-loop 'industry_market'
+    # edge (source_node_id == target_node_id). 384 such rows were 78% of the
+    # edge table and inflated every page-to-page connectivity metric.
     db = _make_db(
         tmp_path,
         nodes=[{"node_id": "n1"}],
@@ -271,10 +280,24 @@ def test_industry_market_edge_from_cooccurrence(tmp_path):
         ],
     )
     agent = RelationshipMappingAgent(db_path=db)
-    result, _ = agent.run(dry_run=True)
-    im = [e for e in result.edges if e.relationship_type == "industry_market"]
-    assert len(im) == 1
-    assert im[0].source_node_id == "n1" and im[0].target_node_id == "n1"
+    result, _ = agent.run(dry_run=False)
+
+    # no edge of any kind for a single isolated page — and never a self-loop
+    assert not [e for e in result.edges if e.relationship_type == "industry_market"]
+    assert not [e for e in result.edges
+                if e.source_node_id == e.target_node_id], "self-loop edge emitted"
+
+    # the hierarchy landed in its designed home instead
+    conn = sqlite3.connect(db)
+    market_id, parent_id = conn.execute(
+        "SELECT entity_id, parent_entity_id FROM content_entities "
+        "WHERE entity_type='market'"
+    ).fetchone()
+    industry_id = conn.execute(
+        "SELECT entity_id FROM content_entities WHERE entity_type='industry'"
+    ).fetchone()[0]
+    conn.close()
+    assert parent_id == industry_id, "market's parent industry not set"
 
 
 def test_support_edge_requires_market_overlap_not_just_industry(tmp_path):

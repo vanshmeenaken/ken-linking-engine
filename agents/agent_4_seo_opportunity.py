@@ -109,10 +109,17 @@ class SEOOpportunityAgent:
                 if r["confidence_score"] is not None and r["confidence_score"] < 0.5:
                     low_conf.add(r["node_id"])
 
+            # Only genuine page-to-page edges count as "linked". Self-loop
+            # edges (source == target) are page-scoped entity facts, not links
+            # to another page, and must not suppress a missing_relationships
+            # flag. (relationship_edges should hold no self-loops post-fix; the
+            # guard keeps this correct even if one ever leaks in.)
             linked = {
                 r[0] for r in conn.execute(
                     "SELECT source_node_id FROM relationship_edges "
-                    "UNION SELECT target_node_id FROM relationship_edges"
+                    "WHERE source_node_id != target_node_id "
+                    "UNION SELECT target_node_id FROM relationship_edges "
+                    "WHERE source_node_id != target_node_id"
                 )
             }
         finally:
