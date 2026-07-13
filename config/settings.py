@@ -8,17 +8,25 @@ API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 
 # ── Google integrations (Search Console + GA4) ───────────────────────────────
-# Both read the SAME service-account JSON key. To enable:
-#   1. Google Cloud Console -> create service account -> download JSON key
-#   2. Enable "Google Search Console API" + "Google Analytics Data API"
-#   3. Grant the service-account email access:
-#      - Search Console: property -> Settings -> Users -> add (Full or Restricted)
-#      - GA4: Admin -> Property Access Management -> add as Viewer
-#   4. Set the vars below in .env
+# One credentials file drives BOTH GSC and GA4. Two kinds are supported and
+# auto-detected — you do not need to say which:
+#
+#   OAuth client (Desktop app)  -> you log in once in a browser; the app then
+#                                  acts with YOUR OWN access. No admin needed.
+#   Service account             -> a robot identity; its email must be granted
+#                                  access in GSC and GA4 by an admin.
+#
+# Both need these APIs enabled in the Google Cloud project:
+#   "Google Search Console API" and "Google Analytics Data API"
 #
 # Everything degrades gracefully when unset: the sync scripts report missing
 # credentials and exit cleanly rather than breaking the pipeline.
-GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "")
+GOOGLE_CREDENTIALS_PATH = os.getenv(
+    "GOOGLE_CREDENTIALS_PATH", "credentials/client_secret.json")
+
+# Where the OAuth login result is cached, so the browser consent happens ONCE.
+# This file grants ongoing access — it is gitignored and must stay that way.
+GOOGLE_TOKEN_PATH = os.getenv("GOOGLE_TOKEN_PATH", "credentials/token.json")
 
 # Search Console property, exactly as it appears in GSC.
 #   domain property : sc-domain:kenresearch.com

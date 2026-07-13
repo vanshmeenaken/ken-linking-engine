@@ -10,3 +10,9 @@ tmp/
 .gitignore~*
 full_database_dump.sql
 db_export_csv/
+
+# Google OAuth / service-account credentials and tokens — never commit
+credentials/
+client_secret*.json
+token.json
+*.credentials.json
