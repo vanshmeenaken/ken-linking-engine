@@ -228,7 +228,17 @@ class LinkRecommendationAgent:
                     recommendation_reason=self._reason(e, anchor, b),
                     factors={k: round(val, 3) for k, val in f.items()},
                 ))
-            return recs
+
+            # De-duplicate: two pages can share more than one relationship type
+            # (e.g. same_market AND global_local), which would otherwise emit the
+            # same source->target link twice. Keep one per (source, target) pair,
+            # the highest-scoring, so a link is never recommended twice.
+            best: dict[tuple[str, str], Recommendation] = {}
+            for r in recs:
+                key = (r.source_node_id, r.target_node_id)
+                if key not in best or r.link_score > best[key].link_score:
+                    best[key] = r
+            return sorted(best.values(), key=lambda r: -r.link_score)
         finally:
             conn.close()
 

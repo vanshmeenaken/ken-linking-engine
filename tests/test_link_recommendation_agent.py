@@ -78,6 +78,18 @@ def test_no_double_market_in_stored_anchors():
     assert bad == 0
 
 
+def test_no_duplicate_source_target_pairs():
+    # Regression: two pages can share more than one relationship type; the same
+    # source->target link must still be recommended only once (highest score).
+    conn = sqlite3.connect("ken_links.db")
+    dup = conn.execute(
+        "SELECT COUNT(*) FROM (SELECT source_node_id, target_node_id, COUNT(*) k "
+        "FROM link_recommendations GROUP BY source_node_id, target_node_id "
+        "HAVING k > 1)").fetchone()[0]
+    conn.close()
+    assert dup == 0, "the same source->target link is recommended more than once"
+
+
 # ── API ──────────────────────────────────────────────────────────────────────
 
 def test_review_queue_returns_pending_scored():
