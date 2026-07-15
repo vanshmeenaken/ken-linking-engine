@@ -1033,6 +1033,118 @@ def get_business_priority(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Phase 3 — Link recommendations (Agent 6) + editorial review queue
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── 31. Review queue ── static path, defined before /{...} siblings ──────────
+
+@app.get("/api/recommendations/review-queue")
+def get_review_queue(limit: int = Query(50, ge=1, le=500)):
+    """The editorial review queue: pending recommendations that passed
+    validation, highest link score first. This is the list a human works down
+    to approve or reject links (master PRD 24.4)."""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT recommendation_id, source_url, target_url, relationship_type,
+                  anchor_text, placement_type, placement_section, link_score,
+                  seo_score, business_score, score_band, risk_flag,
+                  recommendation_reason
+           FROM link_recommendations
+           WHERE status = 'pending' AND score_band != 'drop'
+           ORDER BY link_score DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return {"count": len(rows), "recommendations": [dict(r) for r in rows]}
+
+
+# ── 32. Recommendation stats ─────────────────────────────────────────────────
+
+@app.get("/api/recommendations/stats")
+def get_recommendation_stats():
+    """Summary of the recommendation set: totals by band, status, and
+    validation outcome."""
+    conn = get_db()
+    def group(col):
+        return {row[0]: row[1] for row in conn.execute(
+            f"SELECT {col}, COUNT(*) FROM link_recommendations GROUP BY {col}")}
+    total = conn.execute("SELECT COUNT(*) FROM link_recommendations").fetchone()[0]
+    avg = conn.execute(
+        "SELECT ROUND(AVG(link_score),1) FROM link_recommendations").fetchone()[0]
+    # build every group BEFORE closing the connection
+    result = {"total": total, "avg_link_score": avg,
+              "by_band": group("score_band"), "by_status": group("status"),
+              "by_validation": group("validation_status")}
+    conn.close()
+    return result
+
+
+# ── 33. List recommendations (paginated, filterable) ─────────────────────────
+
+@app.get("/api/recommendations")
+def list_recommendations(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    band: Optional[str] = Query(None, description="priority | strong | secondary | hold"),
+    status: Optional[str] = Query(None, description="pending | approved | rejected | deployed"),
+    relationship_type: Optional[str] = Query(None),
+):
+    """List link recommendations with full context, highest score first."""
+    conn = get_db()
+    where, params = [], []
+    if band:
+        where.append("LOWER(score_band) = LOWER(?)"); params.append(band)
+    if status:
+        where.append("LOWER(status) = LOWER(?)"); params.append(status)
+    if relationship_type:
+        where.append("LOWER(relationship_type) = LOWER(?)"); params.append(relationship_type)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM link_recommendations {where_sql}", params).fetchone()[0]
+    rows = conn.execute(
+        f"""SELECT recommendation_id, source_url, target_url, relationship_type,
+                   anchor_text, placement_type, placement_section, link_score,
+                   seo_score, business_score, ai_readiness_score, confidence_score,
+                   score_band, risk_flag, risk_reason, recommendation_reason,
+                   validation_status, status
+            FROM link_recommendations {where_sql}
+            ORDER BY link_score DESC LIMIT ? OFFSET ?""",
+        params + [limit, skip],
+    ).fetchall()
+    conn.close()
+    return {"total": total, "skip": skip, "limit": limit,
+            "recommendations": [dict(r) for r in rows]}
+
+
+# ── 34. Recommendations touching one page ────────────────────────────────────
+
+@app.get("/api/pages/{node_id}/recommendations")
+def get_page_recommendations(node_id: str):
+    """Link recommendations where this page is the source (links it should add)
+    or the target (links it should receive). 404 if the page is unknown."""
+    conn = get_db()
+    page = conn.execute(
+        "SELECT node_id, url, title FROM content_nodes WHERE node_id = ?",
+        (node_id,)).fetchone()
+    if page is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Page '{node_id}' not found")
+    outgoing = conn.execute(
+        """SELECT target_url, anchor_text, link_score, score_band, placement_type
+           FROM link_recommendations WHERE source_node_id = ?
+           ORDER BY link_score DESC""", (node_id,)).fetchall()
+    incoming = conn.execute(
+        """SELECT source_url, anchor_text, link_score, score_band, placement_type
+           FROM link_recommendations WHERE target_node_id = ?
+           ORDER BY link_score DESC""", (node_id,)).fetchall()
+    conn.close()
+    return {**dict(page),
+            "links_to_add": [dict(r) for r in outgoing],
+            "links_to_receive": [dict(r) for r in incoming]}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Phase 2 — Google integrations (GSC / GA4)
 # ═════════════════════════════════════════════════════════════════════════════
 

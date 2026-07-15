@@ -1,0 +1,108 @@
+{
+  "generated_at": "2026-07-15T11:36:38.080216+00:00",
+  "dry_run": false,
+  "elapsed_seconds": 0.1,
+  "recommendations": 49,
+  "by_band": {
+    "hold": 45,
+    "secondary": 4
+  },
+  "deferred_factors": {
+    "freshness": 6,
+    "evidence_support": 5,
+    "sentiment_external": 2
+  },
+  "computable_weight_total": 87,
+  "sample": [
+    {
+      "source": "cold-storage-market-strategy-saudi-arabia",
+      "target": "uae-cold-storage-market-expansion-strategies",
+      "anchor": "UAE Cold Storage Market",
+      "score": 60.9,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "cold-storage-market-strategy-saudi-arabia and uae-cold-storage-market-expansion-strategies share a same market relationship (confidence 0.90); link with anchor 'UAE Cold Storage Market' [hold]."
+    },
+    {
+      "source": "indonesia-coin-operated-commercial-laundry-market",
+      "target": "thailand-coin-operated-commercial-laundry-market",
+      "anchor": "Thailand Coin Operated Commercial Laundry Market",
+      "score": 70.7,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "indonesia-coin-operated-commercial-laundry-market and thailand-coin-operated-commercial-laundry-market share a same market relationship (confidence 0.90); link with anchor 'Thailand Coin Operated Commercial Laundry Market' [secondary]."
+    },
+    {
+      "source": "brazil-pharmaceuticals-market",
+      "target": "cost-effective-market-entry-strategy-vietnam-pharma",
+      "anchor": "Vietnam Pharmaceutical Market",
+      "score": 50.8,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "brazil-pharmaceuticals-market and cost-effective-market-entry-strategy-vietnam-pharma share a same market relationship (confidence 0.90); link with anchor 'Vietnam Pharmaceutical Market' [hold]."
+    },
+    {
+      "source": "vietnam-car-rental-mobility-solutions-market",
+      "target": "indonesia-car-rental-leasing-market-b2b-ota-dominance",
+      "anchor": "Indonesia Car Rental Market",
+      "score": 67.1,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "vietnam-car-rental-mobility-solutions-market and indonesia-car-rental-leasing-market-b2b-ota-dominance share a same market relationship (confidence 0.90); link with anchor 'Indonesia Car Rental Market' [secondary]."
+    },
+    {
+      "source": "vietnam-car-rental-mobility-solutions-market",
+      "target": "car-rental-market-entry-strategy-vs-risk-analysis",
+      "anchor": "Global Car Rental Market",
+      "score": 60.7,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "vietnam-car-rental-mobility-solutions-market and car-rental-market-entry-strategy-vs-risk-analysis share a same market relationship (confidence 0.90); link with anchor 'Global Car Rental Market' [hold]."
+    },
+    {
+      "source": "indonesia-car-rental-leasing-market-b2b-ota-dominance",
+      "target": "car-rental-market-entry-strategy-vs-risk-analysis",
+      "anchor": "Global Car Rental Market",
+      "score": 54.6,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "indonesia-car-rental-leasing-market-b2b-ota-dominance and car-rental-market-entry-strategy-vs-risk-analysis share a same market relationship (confidence 0.90); link with anchor 'Global Car Rental Market' [hold]."
+    },
+    {
+      "source": "india-cement-industry-benchmarking-and-brand-strategy",
+      "target": "uae-cement-market-outlook-entry-opportunity",
+      "anchor": "UAE Cement Market",
+      "score": 59.2,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "india-cement-industry-benchmarking-and-brand-strategy and uae-cement-market-outlook-entry-opportunity share a same market relationship (confidence 0.90); link with anchor 'UAE Cement Market' [hold]."
+    },
+    {
+      "source": "saudi-hospitality-market-future",
+      "target": "oman-hospitality-market-occupancy-rising-60-percent",
+      "anchor": "Oman Hospitality Market",
+      "score": 58.9,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "saudi-hospitality-market-future and oman-hospitality-market-occupancy-rising-60-percent share a same market relationship (confidence 0.90); link with anchor 'Oman Hospitality Market' [hold]."
+    },
+    {
+      "source": "malaysia-personal-loan-market",
+      "target": "india-personal-loan-market-trust-gap",
+      "anchor": "India Personal Loan Market",
+      "score": 64.2,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "malaysia-personal-loan-market and india-personal-loan-market-trust-gap share a same market relationship (confidence 0.90); link with anchor 'India Personal Loan Market' [hold]."
+    },
+    {
+      "source": "b2b-elearning-market-trends-india-it-sector",
+      "target": "south-africa-e-learning-market",
+      "anchor": "South Africa E-Learning Market",
+      "score": 52.7,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "b2b-elearning-market-trends-india-it-sector and south-africa-e-learning-market share a same market relationship (confidence 0.90); link with anchor 'South Africa E-Learning Market' [hold]."
+    }
+  ]
+}
