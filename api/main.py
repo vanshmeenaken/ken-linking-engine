@@ -1117,7 +1117,94 @@ def list_recommendations(
             "recommendations": [dict(r) for r in rows]}
 
 
-# ── 34. Recommendations touching one page ────────────────────────────────────
+# ── 34. Anchor bank for one page (Agent 7) ───────────────────────────────────
+
+@app.get("/api/pages/{node_id}/anchors")
+def get_page_anchors(node_id: str):
+    """The anchor bank for one target page: the diverse, safe anchor options
+    Agent 7 built, so inbound links can rotate anchors instead of repeating one
+    exact-match phrase. 404 if the page is unknown; empty bank if none built."""
+    import json as _json
+    conn = get_db()
+    page = conn.execute(
+        "SELECT node_id, url, title FROM content_nodes WHERE node_id = ?",
+        (node_id,)).fetchone()
+    if page is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Page '{node_id}' not found")
+    bank = conn.execute(
+        "SELECT * FROM anchor_banks WHERE target_node_id = ?", (node_id,)).fetchone()
+    conn.close()
+    if bank is None:
+        return {**dict(page), "has_bank": False,
+                "note": "No anchor bank yet. Run agents/agent_7_anchor_text.py."}
+    def arr(col):
+        return _json.loads(bank[col]) if bank[col] else []
+    return {
+        **dict(page), "has_bank": True,
+        "primary_anchor": bank["primary_anchor"],
+        "secondary_anchors": arr("secondary_anchors"),
+        "long_tail_anchors": arr("long_tail_anchors"),
+        "country_specific_anchors": arr("country_specific_anchors"),
+        "market_specific_anchors": arr("market_specific_anchors"),
+        "commercial_anchors": arr("commercial_anchors"),
+        "restricted_anchors": arr("restricted_anchors"),
+    }
+
+
+# ── 35. Editorial action on a recommendation (approve / reject / edit) ───────
+
+class RecommendationDecision(BaseModel):
+    decision: str            # "approve" | "reject"
+    reviewed_by: str
+    edited_anchor: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.patch("/api/recommendations/{recommendation_id}")
+def decide_recommendation(recommendation_id: str, body: RecommendationDecision):
+    """Editorial action on one recommendation (master PRD 29.3): approve or
+    reject it, optionally editing the anchor text. Records who decided. This is
+    the human-in-the-loop gate; nothing deploys without an approve here.
+
+    Deliberately does NOT publish anything to the live site (that is Phase 4,
+    and requires CMS access). It only records the editorial decision.
+    """
+    decision = body.decision.strip().lower()
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=422,
+                            detail="decision must be 'approve' or 'reject'")
+    new_status = "approved" if decision == "approve" else "rejected"
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    conn = get_db()
+    existing = conn.execute(
+        "SELECT status FROM link_recommendations WHERE recommendation_id = ?",
+        (recommendation_id,)).fetchone()
+    if existing is None:
+        conn.close()
+        raise HTTPException(status_code=404,
+                            detail=f"Recommendation '{recommendation_id}' not found")
+    sets = ["status = ?", "approved_by = ?", "updated_at = ?"]
+    params: list = [new_status, body.reviewed_by, now]
+    if body.edited_anchor:
+        sets.append("anchor_text = ?"); params.append(body.edited_anchor)
+    if body.notes:
+        sets.append("risk_reason = ?"); params.append(body.notes)
+    params.append(recommendation_id)
+    conn.execute(
+        f"UPDATE link_recommendations SET {', '.join(sets)} "
+        "WHERE recommendation_id = ?", params)
+    conn.commit()
+    row = conn.execute(
+        "SELECT recommendation_id, status, approved_by, anchor_text, updated_at "
+        "FROM link_recommendations WHERE recommendation_id = ?",
+        (recommendation_id,)).fetchone()
+    conn.close()
+    return {"updated": True, **dict(row)}
+
+
+# ── 36. Recommendations touching one page ────────────────────────────────────
 
 @app.get("/api/pages/{node_id}/recommendations")
 def get_page_recommendations(node_id: str):

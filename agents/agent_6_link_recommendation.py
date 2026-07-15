@@ -56,6 +56,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.agent_10_seo_validation import SEOValidationAgent
+from analysis.anchor_text import build_primary_anchor
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "ken_links.db"
@@ -126,46 +127,13 @@ class LinkRecommendationAgent:
         conn.row_factory = sqlite3.Row
         return conn
 
-    # ── anchor text (inline Agent 7 seed; descriptive, never generic) ────────
-    # Geographic acronyms that .title() would mangle (Uae, Usa, Ksa, Uk, Gcc).
-    GEO_ACRONYMS = {"uae": "UAE", "usa": "USA", "ksa": "KSA", "uk": "UK",
-                    "gcc": "GCC", "us": "US", "eu": "EU", "apac": "APAC"}
-
-    @classmethod
-    def _fmt_geo(cls, country: str) -> str:
-        """Title-case a country, but keep acronyms upper (uae -> UAE)."""
-        return " ".join(cls.GEO_ACRONYMS.get(w.lower(), w.title())
-                        for w in country.split())
-
-    @classmethod
-    def _build_anchor(cls, target: sqlite3.Row) -> tuple[str, float]:
-        """Return (anchor_text, anchor_quality 0-1).
-
-        Prefers descriptive "Country Market" anchors built from the target's
-        structured fields (master PRD 18.3 use country+market). " Market" is
-        appended only when the market value does not already end in it, so we
-        never emit "... Market Market". Falls back to a cleaned title; quality
-        is lower there so the score reflects the uncertainty.
-        """
-        market = (target["market"] or "").strip()
-        country = (target["country"] or "").strip()
-
-        def with_market(m: str) -> str:
-            return m if m.lower().endswith("market") else f"{m} Market"
-
-        if market and country:
-            return f"{cls._fmt_geo(country)} {with_market(market)}", 1.0
-        if market:
-            return with_market(market), 0.9
-        # fall back to the title, stripped of boilerplate tail
-        title = (target["title"] or "").strip()
-        for sep in [" Market Size", " Market Share", " Market Analysis",
-                    " Market Report", " Market,", " | ", " Report "]:
-            i = title.find(sep)
-            if i > 0:
-                title = title[:i] + (" Market" if "Market" in sep else "")
-                break
-        return (title[:70] or "Market Report"), 0.6
+    # ── anchor text (descriptive, never generic) ─────────────────────────────
+    @staticmethod
+    def _build_anchor(target: sqlite3.Row) -> tuple[str, float]:
+        """Descriptive (anchor, quality) for the target. Delegates to the
+        shared anchor helper so Agent 6 and Agent 7 stay consistent."""
+        return build_primary_anchor(
+            target["market"], target["country"], target["title"])
 
     def _load_signals(self, conn) -> dict:
         """Per-node GSC striking-distance and GA4 conversion flags."""
