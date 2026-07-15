@@ -296,6 +296,25 @@
     <div id="rel-wrap"><div class="loading">Loading…</div></div>
   </div>
 
+  <!-- ══ Phase 3: Recommendation Engine ════════════════════════════════ -->
+
+  <h2 class="section-heading">Link Recommendations</h2>
+
+  <div class="stat-grid" id="rec-grid">
+    <div class="loading">Loading recommendations…</div>
+  </div>
+
+  <div class="table-panel" style="margin-bottom:24px;">
+    <h2>Review Queue — Suggested Links Ready for a Human to Approve</h2>
+    <p class="panel-note" style="margin:0 0 12px;">
+      The system's actual link recommendations: which page should link to which,
+      with what anchor text and where, ranked by score. Nothing is applied
+      automatically — this is the list an editor approves or rejects. Highest
+      score first.
+    </p>
+    <div id="rec-wrap"><div class="loading">Loading…</div></div>
+  </div>
+
   <h2 class="section-heading">Full Page Inventory</h2>
 
   <div class="table-panel">
@@ -675,6 +694,69 @@ async function loadFixFirst() {
   `;
 }
 
+const REC_BAND = {
+  priority: "high", strong: "high", secondary: "medium", hold: "low",
+};
+
+async function loadRecommendations() {
+  const [stats, queue] = await Promise.all([
+    getJSON(`${API}/api/recommendations/stats`),
+    getJSON(`${API}/api/recommendations/review-queue?limit=25`),
+  ]);
+
+  const bands = stats.by_band || {};
+  document.getElementById("rec-grid").innerHTML = `
+    <div class="stat-card good">
+      <div class="label">Recommendations</div>
+      <div class="value">${fmt(stats.total)}</div>
+      <div class="sub">links the system suggests</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Average Score</div>
+      <div class="value">${stats.avg_link_score ?? "—"}</div>
+      <div class="sub">out of 100</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Strong or Better</div>
+      <div class="value">${fmt((bands.priority || 0) + (bands.strong || 0))}</div>
+      <div class="sub">score 80+</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Awaiting Review</div>
+      <div class="value">${fmt((stats.by_status || {}).pending || 0)}</div>
+      <div class="sub">pending an editor</div>
+    </div>
+  `;
+
+  const wrap = document.getElementById("rec-wrap");
+  if (!queue.count) {
+    wrap.innerHTML = `<div class="empty-msg">No recommendations in the queue. `
+      + `Run agents/agent_6_link_recommendation.py.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr><th>From Page</th><th>Should Link To</th><th>Anchor Text</th>
+            <th>Where</th><th>Score</th></tr>
+      </thead>
+      <tbody>
+        ${queue.recommendations.map(r => `
+          <tr>
+            <td><a href="${r.source_url}" target="_blank" rel="noopener">${r.source_url.split("/").pop()}</a></td>
+            <td><a href="${r.target_url}" target="_blank" rel="noopener">${r.target_url.split("/").pop()}</a></td>
+            <td>${r.anchor_text}</td>
+            <td>${(r.placement_section || r.placement_type || "").replace(/_/g, " ")}</td>
+            <td><span class="badge ${REC_BAND[r.score_band] || "low"}">${r.link_score} ${r.score_band}</span></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+    <p class="panel-note">Showing ${queue.recommendations.length} of ${stats.total}. `
+      + `An editor approves or rejects each; nothing is applied to the live site automatically.</p>
+  `;
+}
+
 async function loadRelationships() {
   const type = document.getElementById("rel-type-filter").value;
   const limit = document.getElementById("rel-page-size").value;
@@ -748,6 +830,7 @@ async function loadEverything() {
     loadIntelligence(),
     loadIntegrations(),
     loadFixFirst(),
+    loadRecommendations(),
     loadRelationships(),
   ]);
 }
