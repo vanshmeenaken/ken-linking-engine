@@ -19,6 +19,8 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
+from analysis.vector_store import VectorStore
+
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
@@ -32,6 +34,28 @@ STOP = {
 
 # Minimum overlap score for a paragraph to count as a genuine contextual home.
 CONTEXTUAL_THRESHOLD = 2
+
+# Ken's report pages end with a standard "why work with us" company-pitch
+# block (consultant methodology, "syndicated and customized", "if you need
+# any support"). It is never genuine market content, but its promotional
+# language ("insights", "market research", "growth") overlaps with target
+# TITLES enough to occasionally outscore the real content paragraphs in a
+# small per-page TF-IDF fit (found via manual review: a Brazil pharma page's
+# boilerplate outscored its own Brazil-pharma content paragraph for a
+# pharma-market target). Filtered out before ranking, not after - it should
+# never be a placement candidate regardless of ranking method.
+BOILERPLATE_MARKERS = (
+    "what makes us stand out", "we have set a benchmark",
+    "syndicated and customized", "our consultants follows",
+    "we pride ourselves", "if you need any support",
+    "our research team constantly", "while we don't replace",
+    "instant access to the answers", "with one step in the future",
+)
+
+
+def is_boilerplate(paragraph: str) -> bool:
+    p = (paragraph or "").lower()
+    return any(marker in p for marker in BOILERPLATE_MARKERS)
 
 
 def _clean(text: str) -> str:
@@ -54,7 +78,7 @@ def fetch_paragraphs(url: str, timeout: int = 20) -> list[str]:
     for tag in soup(["script", "style", "nav", "header", "footer", "form"]):
         tag.decompose()
     paras = [_clean(p.get_text(" ", strip=True)) for p in soup.find_all("p")]
-    return [p for p in paras if len(p) > 60]
+    return [p for p in paras if len(p) > 60 and not is_boilerplate(p)]
 
 
 def _tokens(text: str) -> set[str]:
@@ -76,6 +100,15 @@ GEO_WORDS = {
 }
 
 
+def subject_text(market: str, title: str) -> str:
+    """The geography-stripped subject phrase for a target, e.g. "Cold Storage
+    Market UAE Cold Storage Market" -> "Cold Storage Market Cold Storage
+    Market". Used as the vector-search query so a match can only come from
+    shared SUBJECT, never from sharing a region alone."""
+    words = re.findall(r"[a-zA-Z0-9]+", " ".join(filter(None, [market, title])))
+    return " ".join(w for w in words if w.lower() not in GEO_WORDS)
+
+
 def target_keywords(market: str, country: str, region: str, title: str) -> set[str]:
     """The distinctive SUBJECT tokens that identify a target page.
 
@@ -84,12 +117,43 @@ def target_keywords(market: str, country: str, region: str, title: str) -> set[s
     to be a genuine contextual home; sharing only a region does not qualify.
     `country`/`region` are accepted for signature stability but not used here.
     """
-    return _tokens(" ".join(filter(None, [market, title]))) - GEO_WORDS
+    return _tokens(subject_text(market, title))
 
 
 def _split_sentences(paragraph: str) -> list[str]:
     parts = re.split(r"(?<=[.!?])\s+", paragraph)
     return [s.strip() for s in parts if len(s.strip()) > 30]
+
+
+def best_placement_semantic(paragraphs: list[str], query_text: str,
+                            min_score: float = 0.12) -> dict | None:
+    """Vector-search based placement: rank a page's paragraphs by cosine
+    similarity to the target's subject text (geography-stripped, so a match
+    can only come from shared subject) and return the closest one.
+
+    This is the "vector search foundation" applied to contextual placement:
+    a small VectorStore is built over just this page's paragraphs (a handful
+    of items, so brute-force cosine is instant) and searched with the query.
+    The interface is identical to the whole-catalogue case in
+    analysis/vector_store.py; only the item count differs.
+
+    Returns {paragraph_index, sentence, score, method:'vector'}, or None if
+    nothing clears min_score (the caller should then try the stricter keyword
+    method, and failing that, route the link to the related-block).
+    """
+    if not paragraphs or not query_text.strip():
+        return None
+    store = VectorStore.fit([(str(i), p) for i, p in enumerate(paragraphs)])
+    results = store.search(query_text, top_k=1)
+    if not results or results[0].score < min_score:
+        return None
+    idx = int(results[0].item_id)
+    para = paragraphs[idx]
+    sentences = _split_sentences(para) or [para]
+    q_tokens = _tokens(query_text)
+    sentence = max(sentences, key=lambda s: len(_tokens(s) & q_tokens))
+    return {"paragraph_index": idx, "sentence": sentence[:300],
+            "score": round(results[0].score, 4), "method": "vector"}
 
 
 def best_placement(paragraphs: list[str], keywords: set[str]) -> dict | None:

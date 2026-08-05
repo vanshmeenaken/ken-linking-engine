@@ -1,0 +1,108 @@
+{
+  "generated_at": "2026-07-15T12:41:56.782213+00:00",
+  "dry_run": false,
+  "elapsed_seconds": 0.48,
+  "recommendations": 42,
+  "by_band": {
+    "secondary": 4,
+    "hold": 38
+  },
+  "deferred_factors": {
+    "freshness": 6,
+    "evidence_support": 5,
+    "sentiment_external": 2
+  },
+  "computable_weight_total": 87,
+  "sample": [
+    {
+      "source": "indonesia-online-grocery-market",
+      "target": "india-online-grocery-market",
+      "anchor": "India Online Grocery Market",
+      "score": 75.4,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "indonesia-online-grocery-market and india-online-grocery-market share a same market relationship (confidence 0.90); link with anchor 'India Online Grocery Market' [secondary]."
+    },
+    {
+      "source": "indonesia-coin-operated-commercial-laundry-market",
+      "target": "thailand-coin-operated-commercial-laundry-market",
+      "anchor": "Thailand Coin Operated Commercial Laundry Market",
+      "score": 70.7,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "indonesia-coin-operated-commercial-laundry-market and thailand-coin-operated-commercial-laundry-market share a same market relationship (confidence 0.90); link with anchor 'Thailand Coin Operated Commercial Laundry Market' [secondary]."
+    },
+    {
+      "source": "mexico-nutritional-supplements-functional-foods-market",
+      "target": "turkey-nutritional-supplements-and-wellness-market",
+      "anchor": "Turkey Nutritional Supplements Market",
+      "score": 69.7,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "mexico-nutritional-supplements-functional-foods-market and turkey-nutritional-supplements-and-wellness-market share a same market relationship (confidence 0.90); link with anchor 'Turkey Nutritional Supplements Market' [secondary]."
+    },
+    {
+      "source": "vietnam-car-rental-mobility-solutions-market",
+      "target": "indonesia-car-rental-leasing-market-b2b-ota-dominance",
+      "anchor": "Indonesia Car Rental Market",
+      "score": 67.1,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "vietnam-car-rental-mobility-solutions-market and indonesia-car-rental-leasing-market-b2b-ota-dominance share a same market relationship (confidence 0.90); link with anchor 'Indonesia Car Rental Market' [secondary]."
+    },
+    {
+      "source": "car-rental-market-entry-strategy-vs-risk-analysis",
+      "target": "vietnam-car-rental-mobility-solutions-market",
+      "anchor": "Vietnam Car Rental Market",
+      "score": 64.7,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "car-rental-market-entry-strategy-vs-risk-analysis and vietnam-car-rental-mobility-solutions-market share a case study support relationship (confidence 0.75); link with anchor 'Vietnam Car Rental Market' [hold]."
+    },
+    {
+      "source": "southeast-asia-lubricants-market-future-2030",
+      "target": "uae-lubricants-market-5-players-reshaping-profitability",
+      "anchor": "UAE Lubricants Market",
+      "score": 64.5,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "southeast-asia-lubricants-market-future-2030 and uae-lubricants-market-5-players-reshaping-profitability share a global local relationship (confidence 0.80); link with anchor 'UAE Lubricants Market' [hold]."
+    },
+    {
+      "source": "malaysia-personal-loan-market",
+      "target": "india-personal-loan-market-trust-gap",
+      "anchor": "India Personal Loan Market",
+      "score": 64.2,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "malaysia-personal-loan-market and india-personal-loan-market-trust-gap share a same market relationship (confidence 0.90); link with anchor 'India Personal Loan Market' [hold]."
+    },
+    {
+      "source": "india-personal-loan-market-trust-gap",
+      "target": "malaysia-personal-loan-market",
+      "anchor": "Malaysia Personal Loan Market",
+      "score": 63.4,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "india-personal-loan-market-trust-gap and malaysia-personal-loan-market share a report article support relationship (confidence 0.75); link with anchor 'Malaysia Personal Loan Market' [hold]."
+    },
+    {
+      "source": "ksa-automotive-market-competitive-shift",
+      "target": "ksa-automotive-growth-strategy-vision-2030",
+      "anchor": "Saudi Arabia Automotive Market",
+      "score": 63.1,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "ksa-automotive-market-competitive-shift and ksa-automotive-growth-strategy-vision-2030 share a same market relationship (confidence 0.90); link with anchor 'Saudi Arabia Automotive Market' [hold]."
+    },
+    {
+      "source": "qatar-catering-meal-pricing-gtm-profitability",
+      "target": "india-catering-industry-future-regional-economics",
+      "anchor": "India Catering Market",
+      "score": 62.8,
+      "band": "hold",
+      "validation": "approved_for_review",
+      "reason": "qatar-catering-meal-pricing-gtm-profitability and india-catering-industry-future-regional-economics share a same market relationship (confidence 0.90); link with anchor 'India Catering Market' [hold]."
+    }
+  ]
+}

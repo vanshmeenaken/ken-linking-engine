@@ -734,25 +734,41 @@ async function loadRecommendations() {
       + `Run agents/agent_6_link_recommendation.py.</div>`;
     return;
   }
+  const escapeHtml = (s) => (s || "").replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
   wrap.innerHTML = `
     <table>
       <thead>
         <tr><th>From Page</th><th>Should Link To</th><th>Anchor Text</th>
-            <th>Where</th><th>Score</th></tr>
+            <th>Where It Goes</th><th>Score</th></tr>
       </thead>
       <tbody>
-        ${queue.recommendations.map(r => `
+        ${queue.recommendations.map(r => {
+          const isContextual = r.placement_type === "contextual_body";
+          const whereLabel = (r.placement_section || r.placement_type || "").replace(/_/g, " ");
+          const whereCell = isContextual && r.suggested_sentence
+            ? `<div><strong>${whereLabel}</strong></div>
+               <div class="panel-note" style="margin-top:4px; font-style:italic;">
+                 "...${escapeHtml(r.suggested_sentence)}..."
+               </div>`
+            : `<div><strong>${whereLabel}</strong></div>
+               <div class="panel-note" style="margin-top:4px;">
+                 No single sentence fits well — shown as a related-reports link instead.
+               </div>`;
+          return `
           <tr>
             <td><a href="${r.source_url}" target="_blank" rel="noopener">${r.source_url.split("/").pop()}</a></td>
             <td><a href="${r.target_url}" target="_blank" rel="noopener">${r.target_url.split("/").pop()}</a></td>
             <td>${r.anchor_text}</td>
-            <td>${(r.placement_section || r.placement_type || "").replace(/_/g, " ")}</td>
+            <td style="max-width:340px;">${whereCell}</td>
             <td><span class="badge ${REC_BAND[r.score_band] || "low"}">${r.link_score} ${r.score_band}</span></td>
-          </tr>
-        `).join("")}
+          </tr>`;
+        }).join("")}
       </tbody>
     </table>
     <p class="panel-note">Showing ${queue.recommendations.length} of ${stats.total}. `
+      + `Italic text is the exact sentence the link belongs in on the source page. `
       + `An editor approves or rejects each; nothing is applied to the live site automatically.</p>
   `;
 }

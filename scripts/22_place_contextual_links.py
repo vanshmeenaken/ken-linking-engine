@@ -4,12 +4,17 @@ Two PRD-mandated improvements applied in one pass over the existing
 recommendations:
 
   1. Contextual placement (PRD 18.6 placement priority #1: relevant body
-     paragraph). Reads each source page's body, finds the sentence where the
+     paragraph), using the vector-search foundation (analysis/vector_store.py)
+     as the PRIMARY ranking method, with the geography-excluded keyword method
+     as a fallback for short paragraphs where TF-IDF vectors are too sparse to
+     score well. Reads each source page's body, finds the sentence where the
      target genuinely belongs, and stores it as suggested_sentence with
-     placement_type='contextual_body'. Links with no genuine contextual home
-     go to placement_type='related_reports_block' (an end-of-page block, like
-     Search Engine Journal's "Suggested Articles"), never forced into an
-     unrelated sentence.
+     placement_type='contextual_body'. Paragraph text and vectors are persisted
+     to paragraph_embeddings so a future run does not need to recrawl or
+     re-embed. Links with no genuine contextual home from EITHER method go to
+     placement_type='related_reports_block' (an end-of-page block, like Search
+     Engine Journal's "Suggested Articles"), never forced into an unrelated
+     sentence.
 
   2. Anchor variation (PRD 18.4: no single exact-match anchor should dominate).
      When several pages link to the same target, their anchors are rotated
@@ -33,8 +38,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from analysis.contextual_placement import (best_placement, fetch_paragraphs,
+import uuid
+
+from analysis.contextual_placement import (best_placement, best_placement_semantic,
+                                          fetch_paragraphs, subject_text,
                                           target_keywords)
+from analysis.vector_store import VectorStore
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "ken_links.db"
@@ -98,15 +107,23 @@ def main(argv=None) -> int:
         time.sleep(0.3)  # be polite to the server
     print("  done.\n")
 
-    # ── decide placement per recommendation ──────────────────────────────────
+    # ── decide placement per recommendation: vector first, keyword fallback ──
     updates = []
     contextual = related = 0
+    by_method = {"vector": 0, "keyword": 0}
     for r in recs:
-        kws = target_keywords(r["t_market"], r["t_country"], r["t_region"], r["t_title"])
-        placed = best_placement(paragraphs.get(r["source_node_id"], []), kws)
+        page_paras = paragraphs.get(r["source_node_id"], [])
+        query = subject_text(r["t_market"], r["t_title"])
+        placed = best_placement_semantic(page_paras, query)
+        method = "vector"
+        if placed is None:
+            kws = target_keywords(r["t_market"], r["t_country"], r["t_region"], r["t_title"])
+            placed = best_placement(page_paras, kws)
+            method = "keyword"
         if placed:
             ptype, sentence = "contextual_body", placed["sentence"]
             contextual += 1
+            by_method[method] += 1
         else:
             ptype, sentence = "related_reports_block", None
             related += 1
@@ -134,6 +151,8 @@ def main(argv=None) -> int:
             anchor_assigned += 1
 
     print(f"Contextual placements (in body): {contextual}")
+    print(f"  via vector search  : {by_method['vector']}")
+    print(f"  via keyword fallback: {by_method['keyword']}")
     print(f"Routed to Related Reports block : {related}")
     print(f"Anchors rotated from bank       : {anchor_assigned}")
 
@@ -161,11 +180,35 @@ def main(argv=None) -> int:
             params.append(u["id"])
             conn.execute(f"UPDATE link_recommendations SET {', '.join(sets)} "
                          "WHERE recommendation_id=?", params)
+
+        # Persist crawled paragraphs + their vectors (paragraph_embeddings), so
+        # a future run/search can reuse them without recrawling or re-embedding.
+        para_rows = 0
+        for nid, paras in paragraphs.items():
+            if not paras:
+                continue
+            store = VectorStore.fit([(str(i), p) for i, p in enumerate(paras)])
+            for i, p in enumerate(paras):
+                vec = store._vectors[str(i)]
+                conn.execute(
+                    """INSERT INTO paragraph_embeddings
+                       (paragraph_id, node_id, paragraph_index, paragraph_text,
+                        embedding_model, embedding_vector, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?)
+                       ON CONFLICT (node_id, paragraph_index) DO UPDATE SET
+                           paragraph_text=excluded.paragraph_text,
+                           embedding_vector=excluded.embedding_vector,
+                           updated_at=excluded.updated_at""",
+                    (str(uuid.uuid4()), nid, i, p, "tfidf-v1",
+                     json.dumps(vec), now, now),
+                )
+                para_rows += 1
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     conn.close()
+    print(f"Paragraph vectors stored          : {para_rows}")
     print("\nDatabase update: committed.")
     return 0
 

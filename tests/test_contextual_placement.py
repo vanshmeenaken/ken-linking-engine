@@ -3,8 +3,10 @@ the enrichment it produces in link_recommendations."""
 
 import sqlite3
 
-from analysis.contextual_placement import (best_placement, target_keywords,
-                                          _split_sentences)
+from analysis.contextual_placement import (best_placement, best_placement_semantic,
+                                          is_boilerplate, subject_text,
+                                          target_keywords, _split_sentences)
+from analysis.vector_store import VectorStore
 
 
 # ── subject vs geography: the precision rule ─────────────────────────────────
@@ -46,6 +48,69 @@ def test_picks_the_most_relevant_sentence_in_a_paragraph():
 def test_split_sentences_ignores_fragments():
     s = _split_sentences("Short. This is a full sentence long enough to keep.")
     assert all(len(x) > 30 for x in s)
+
+
+# ── vector-search placement ──────────────────────────────────────────────────
+
+def test_vector_search_finds_the_relevant_paragraph():
+    paras = [
+        "Intro sentence with nothing useful here about general trends.",
+        "The car rental market is dominated by short-term and long-term "
+        "rental services across the region.",
+        "Closing thoughts on the broader economy and unrelated topics.",
+    ]
+    placed = best_placement_semantic(paras, "Car Rental Market")
+    assert placed is not None
+    assert placed["paragraph_index"] == 1
+    assert placed["method"] == "vector"
+
+
+def test_vector_search_returns_none_below_threshold():
+    paras = ["A paragraph about something completely unrelated to the query topic."]
+    placed = best_placement_semantic(paras, "Cold Storage Refrigeration Logistics")
+    assert placed is None
+
+
+def test_vector_search_empty_paragraphs_returns_none():
+    assert best_placement_semantic([], "Car Rental Market") is None
+
+
+# ── boilerplate filtering (regression: company pitch outscored real content) ─
+
+def test_boilerplate_detected():
+    assert is_boilerplate(
+        "We have set a benchmark in the industry by offering our clients "
+        "with syndicated and customized market research reports.")
+    assert is_boilerplate(
+        "What makes us stand out is that our consultants follows Robust, "
+        "Refine and Result methodology.")
+    assert not is_boilerplate(
+        "Brazil Pharmaceuticals market in terms of revenue increased at a "
+        "double digit CAGR during the review period.")
+
+
+def test_boilerplate_never_wins_over_genuine_content():
+    # Regression: a company "why choose us" paragraph previously outscored a
+    # real market-content paragraph for a target whose promotional title words
+    # ("Growth, Players, Trade Insights") happened to overlap with Ken's sales
+    # language. The boilerplate paragraph must be filtered before ranking, not
+    # merely outscored, so it can NEVER win regardless of query wording.
+    paras = [
+        "Brazil Pharmaceuticals market in terms of revenue increased at a "
+        "double digit CAGR during the review period.",
+        "We have set a benchmark in the industry by offering our clients "
+        "with syndicated and customized market research reports featuring "
+        "coverage of entire market as well as meticulous research and "
+        "analyst insights.",
+    ]
+    filtered = [p for p in paras if not is_boilerplate(p)]
+    assert len(filtered) == 1
+    q = subject_text("Pharmaceutical Market",
+                     "Vietnam Pharmaceutical Market Entry Strategy | Growth, "
+                     "Players & Trade Insights")
+    placed = best_placement_semantic(filtered, q)
+    assert placed is not None
+    assert "Brazil Pharmaceuticals" in placed["sentence"]
 
 
 # ── the enriched recommendations in the DB ───────────────────────────────────

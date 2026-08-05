@@ -1046,9 +1046,9 @@ def get_review_queue(limit: int = Query(50, ge=1, le=500)):
     conn = get_db()
     rows = conn.execute(
         """SELECT recommendation_id, source_url, target_url, relationship_type,
-                  anchor_text, placement_type, placement_section, link_score,
-                  seo_score, business_score, score_band, risk_flag,
-                  recommendation_reason
+                  anchor_text, placement_type, placement_section,
+                  suggested_sentence, link_score, seo_score, business_score,
+                  score_band, risk_flag, recommendation_reason
            FROM link_recommendations
            WHERE status = 'pending' AND score_band != 'drop'
            ORDER BY link_score DESC
@@ -1218,11 +1218,13 @@ def get_page_recommendations(node_id: str):
         conn.close()
         raise HTTPException(status_code=404, detail=f"Page '{node_id}' not found")
     outgoing = conn.execute(
-        """SELECT target_url, anchor_text, link_score, score_band, placement_type
+        """SELECT target_url, anchor_text, link_score, score_band,
+                  placement_type, placement_section, suggested_sentence
            FROM link_recommendations WHERE source_node_id = ?
            ORDER BY link_score DESC""", (node_id,)).fetchall()
     incoming = conn.execute(
-        """SELECT source_url, anchor_text, link_score, score_band, placement_type
+        """SELECT source_url, anchor_text, link_score, score_band,
+                  placement_type, placement_section, suggested_sentence
            FROM link_recommendations WHERE target_node_id = ?
            ORDER BY link_score DESC""", (node_id,)).fetchall()
     conn.close()
@@ -1327,6 +1329,51 @@ def get_page_search_performance(node_id: str):
             position is not None
             and STRIKING_DISTANCE_MIN <= position <= STRIKING_DISTANCE_MAX
         ),
+    }
+
+
+# ── 30b. GA4 analytics for one page (the GA4 twin of search-performance) ─────
+
+@app.get("/api/pages/{node_id}/analytics")
+def get_page_analytics(node_id: str):
+    """Google Analytics (GA4) metrics for one page (sessions, users, engaged
+    sessions, average engagement seconds, key events / conversions).
+
+    Returns has_data=false rather than 404 when GA4 has not been synced for the
+    page. Use this to prove the GA4 connection: cross-check a number here
+    against the same page in GA4's Pages-and-screens report for the same dates.
+    """
+    conn = get_db()
+    page = conn.execute(
+        "SELECT node_id, url, title FROM content_nodes WHERE node_id = ?",
+        (node_id,),
+    ).fetchone()
+    if page is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Page '{node_id}' not found")
+    rows = conn.execute(
+        """SELECT metric_name, metric_value, date_range
+           FROM integration_placeholders
+           WHERE source='ga4' AND node_id=? AND status='matched'
+           ORDER BY date_range DESC""",
+        (node_id,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return {**dict(page), "has_data": False,
+                "note": "No GA4 data. Run scripts/20_sync_ga4.py (needs credentials)."}
+    window = rows[0]["date_range"]
+    m = {r["metric_name"]: r["metric_value"]
+         for r in rows if r["date_range"] == window}
+    return {
+        **dict(page),
+        "has_data": True,
+        "date_range": window,
+        "sessions": m.get("sessions"),
+        "users": m.get("users"),
+        "engaged_sessions": m.get("engaged_sessions"),
+        "avg_engagement_seconds": m.get("avg_engagement_seconds"),
+        "conversions": m.get("key_events"),
     }
 
 
