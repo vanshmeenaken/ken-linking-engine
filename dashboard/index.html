@@ -50,6 +50,19 @@
     font-weight: 600;
   }
   .refresh-btn:hover { background: #1447b8; }
+  .small-btn {
+    border: none; border-radius: 6px; padding: 5px 10px; cursor: pointer;
+    font-size: 12px; font-weight: 600; margin-right: 6px;
+  }
+  .small-btn.review { background: #dbeafe; color: #1e40af; }
+  .small-btn.review:hover { background: #bfdbfe; }
+  .small-btn.approve { background: #dcfce7; color: #166534; }
+  .small-btn.approve:hover { background: #bbf7d0; }
+  .small-btn.reject { background: #fee2e2; color: #991b1b; }
+  .small-btn.reject:hover { background: #fecaca; }
+  .small-btn:disabled { opacity: 0.5; cursor: default; }
+  .review-note { background: #f8f9fb; border-radius: 8px; padding: 10px 12px; margin-top: 6px; font-size: 13px; line-height: 1.6; }
+  .review-note div { margin-bottom: 4px; }
   main { padding: 24px 28px 60px; max-width: 1400px; margin: 0 auto; }
 
   .stat-grid {
@@ -741,7 +754,7 @@ async function loadRecommendations() {
     <table>
       <thead>
         <tr><th>From Page</th><th>Should Link To</th><th>Anchor Text</th>
-            <th>Where It Goes</th><th>Score</th></tr>
+            <th>Where It Goes</th><th>Score</th><th>Review</th></tr>
       </thead>
       <tbody>
         ${queue.recommendations.map(r => {
@@ -756,6 +769,7 @@ async function loadRecommendations() {
                <div class="panel-note" style="margin-top:4px;">
                  No single sentence fits well — shown as a related-reports link instead.
                </div>`;
+          const id = r.recommendation_id;
           return `
           <tr>
             <td><a href="${r.source_url}" target="_blank" rel="noopener">${r.source_url.split("/").pop()}</a></td>
@@ -763,14 +777,67 @@ async function loadRecommendations() {
             <td>${r.anchor_text}</td>
             <td style="max-width:340px;">${whereCell}</td>
             <td><span class="badge ${REC_BAND[r.score_band] || "low"}">${r.link_score} ${r.score_band}</span></td>
+            <td><button class="small-btn review" onclick="toggleReviewNote('${id}')">Explain</button></td>
+          </tr>
+          <tr id="review-row-${id}" style="display:none;">
+            <td colspan="6"><div id="review-note-${id}" class="review-note"></div></td>
           </tr>`;
         }).join("")}
       </tbody>
     </table>
     <p class="panel-note">Showing ${queue.recommendations.length} of ${stats.total}. `
       + `Italic text is the exact sentence the link belongs in on the source page. `
-      + `An editor approves or rejects each; nothing is applied to the live site automatically.</p>
+      + `Click "Explain" to see why a link is suggested in plain English, then approve or reject it. `
+      + `Nothing is applied to the live site automatically.</p>
   `;
+}
+
+async function toggleReviewNote(id) {
+  const row = document.getElementById(`review-row-${id}`);
+  const cell = document.getElementById(`review-note-${id}`);
+  if (row.style.display !== "none") { row.style.display = "none"; return; }
+  row.style.display = "";
+  cell.innerHTML = "Loading…";
+  try {
+    const note = await getJSON(`${API}/api/recommendations/${id}/review`);
+    renderReviewNote(id, note);
+  } catch (e) {
+    cell.innerHTML = `<span style="color:var(--red)">Could not load review note: ${e.message}</span>`;
+  }
+}
+
+function renderReviewNote(id, note) {
+  const cell = document.getElementById(`review-note-${id}`);
+  const decided = note.status !== "pending";
+  cell.innerHTML = `
+    <div><strong>Why:</strong> ${note.why}</div>
+    <div><strong>Where:</strong> ${note.where}</div>
+    <div><strong>Relationship:</strong> ${note.relationship}</div>
+    <div><strong>SEO value:</strong> ${note.seo_value} &nbsp; <strong>Business value:</strong> ${note.business_value} &nbsp; <strong>Risk:</strong> ${note.risk}</div>
+    <div style="margin-top:8px;">
+      <button class="small-btn approve" ${decided ? "disabled" : ""} onclick="decideRecommendation('${id}','approve')">Approve</button>
+      <button class="small-btn reject" ${decided ? "disabled" : ""} onclick="decideRecommendation('${id}','reject')">Reject</button>
+      ${decided ? `<span class="panel-note" style="display:inline;">Already ${note.status}.</span>` : ""}
+    </div>
+  `;
+}
+
+async function decideRecommendation(id, decision) {
+  const cell = document.getElementById(`review-note-${id}`);
+  try {
+    const res = await fetch(`${API}/api/recommendations/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, reviewed_by: "dashboard-editor" }),
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const note = await getJSON(`${API}/api/recommendations/${id}/review`);
+    renderReviewNote(id, note);
+    loadRecommendations();
+  } catch (e) {
+    cell.insertAdjacentHTML("beforeend",
+      `<div style="color:var(--red)">Could not save decision: ${e.message}</div>`);
+  }
 }
 
 async function loadRelationships() {

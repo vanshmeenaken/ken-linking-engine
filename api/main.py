@@ -1204,6 +1204,51 @@ def decide_recommendation(recommendation_id: str, body: RecommendationDecision):
     return {"updated": True, **dict(row)}
 
 
+# ── 35b. Editorial review note (Agent 11) ────────────────────────────────────
+
+@app.get("/api/recommendations/{recommendation_id}/review")
+def get_recommendation_review(recommendation_id: str):
+    """Plain-English review note for one recommendation (master PRD 13.11):
+    why it's recommended, where it goes, its anchor, relationship, SEO/
+    business value, and risk - everything a human editor needs to approve or
+    reject via PATCH /api/recommendations/{id}. This endpoint never decides
+    anything itself (master PRD section 26: human-in-the-loop)."""
+    from agents.agent_11_editorial_review import build_review_note
+
+    conn = get_db()
+    rec = conn.execute(
+        "SELECT * FROM link_recommendations WHERE recommendation_id = ?",
+        (recommendation_id,)).fetchone()
+    if rec is None:
+        conn.close()
+        raise HTTPException(status_code=404,
+                            detail=f"Recommendation '{recommendation_id}' not found")
+    rec = dict(rec)
+    source_title = conn.execute(
+        "SELECT title FROM content_nodes WHERE node_id = ?",
+        (rec["source_node_id"],)).fetchone()
+    target_title = conn.execute(
+        "SELECT title FROM content_nodes WHERE node_id = ?",
+        (rec["target_node_id"],)).fetchone()
+    conn.close()
+    note = build_review_note(
+        rec, source_title[0] if source_title else rec["source_url"],
+        target_title[0] if target_title else rec["target_url"])
+    return {
+        "recommendation_id": note.recommendation_id,
+        "status": rec["status"],
+        "headline": note.headline,
+        "why": note.why,
+        "where": note.where,
+        "anchor": note.anchor,
+        "relationship": note.relationship,
+        "seo_value": note.seo_value,
+        "business_value": note.business_value,
+        "risk": note.risk,
+        "plain_summary": note.plain_summary,
+    }
+
+
 # ── 36. Recommendations touching one page ────────────────────────────────────
 
 @app.get("/api/pages/{node_id}/recommendations")
