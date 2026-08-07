@@ -58,6 +58,23 @@ def is_boilerplate(paragraph: str) -> bool:
     return any(marker in p for marker in BOILERPLATE_MARKERS)
 
 
+# Report pages render their Table of Contents as <p> tags, e.g.
+# "5.3 Indonesia Online Grocery Market Segmentation By Mode of Payment,
+# 2021P and 2026F" or "9.1.1 Cross Comparison Matrix of Major Players (...)".
+# These are heading LABELS, not prose - found via manual review of the
+# highest-scoring "contextual" placements: a TOC line's heading literally
+# repeats the target's market name, so it vector-matches well despite being
+# unusable as a sentence to embed a link in. Matches "N", "N.N", or "N.N.N"
+# followed by whitespace at the very start of the paragraph. "5.3% growth..."
+# is not matched (no whitespace immediately after the digits), so genuine
+# sentences that happen to start with a number/percentage are unaffected.
+_TOC_HEADING_RE = re.compile(r"^\d+(\.\d+){0,3}\s")
+
+
+def is_toc_or_heading(paragraph: str) -> bool:
+    return bool(_TOC_HEADING_RE.match((paragraph or "").strip()))
+
+
 def _clean(text: str) -> str:
     """Normalise smart punctuation and drop stray replacement chars so stored
     sentences are clean ASCII-ish rather than mojibake."""
@@ -78,7 +95,8 @@ def fetch_paragraphs(url: str, timeout: int = 20) -> list[str]:
     for tag in soup(["script", "style", "nav", "header", "footer", "form"]):
         tag.decompose()
     paras = [_clean(p.get_text(" ", strip=True)) for p in soup.find_all("p")]
-    return [p for p in paras if len(p) > 60 and not is_boilerplate(p)]
+    return [p for p in paras
+            if len(p) > 60 and not is_boilerplate(p) and not is_toc_or_heading(p)]
 
 
 def _tokens(text: str) -> set[str]:
