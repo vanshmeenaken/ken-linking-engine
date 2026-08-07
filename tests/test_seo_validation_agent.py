@@ -152,6 +152,24 @@ def test_footer_placement_flagged_but_not_blocked(tmp_path):
     assert any(f.rule == "footer_placement" for f in r.risk_flags)
 
 
+def test_agent6_placement_vocabulary_not_flagged_unknown(tmp_path):
+    # Regression: Agent 10's PLACEMENT_PRIORITY was written against the master
+    # PRD's abstract names (body_paragraph, related_report_module, ...) while
+    # Agent 6 / the contextual-placement script emit their own concrete names
+    # for the same concepts (contextual_body, related_reports_block, hub_link).
+    # The mismatch made Agent 10 flag "unknown_placement_type" on almost every
+    # real recommendation. All of Agent 6's actual placement values must
+    # validate cleanly, with no "unknown_placement_type" risk flag.
+    agent = _agent(tmp_path, [
+        {"node_id": "s", "url": "https://x/s"},
+        {"node_id": "t", "url": "https://x/t"},
+    ])
+    for placement in ("contextual_body", "related_reports_block", "hub_link"):
+        r = agent.validate("s", "t", "India Online Grocery Market", placement=placement)
+        assert not any(f.rule == "unknown_placement_type" for f in r.risk_flags), (
+            f"placement '{placement}' incorrectly flagged as unknown")
+
+
 def test_missing_node_rejected(tmp_path):
     agent = _agent(tmp_path, [{"node_id": "s", "url": "https://x/s"}])
     r = agent.validate("s", "does-not-exist", "Good Market Report")

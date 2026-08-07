@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import uuid
 
+from agents.agent_10_seo_validation import SEOValidationAgent
 from analysis.contextual_placement import (best_placement, best_placement_semantic,
                                           fetch_paragraphs, subject_text,
                                           target_keywords)
@@ -129,7 +130,8 @@ def main(argv=None) -> int:
             related += 1
         section = ("Related Reports" if ptype == "related_reports_block"
                    else PLACEMENT_SECTION.get(r["relationship_type"], "Market Overview"))
-        updates.append({"id": r["recommendation_id"], "target": r["target_node_id"],
+        updates.append({"id": r["recommendation_id"], "source": r["source_node_id"],
+                        "target": r["target_node_id"],
                         "score": r["link_score"], "placement_type": ptype,
                         "placement_section": section, "suggested_sentence": sentence})
 
@@ -156,6 +158,27 @@ def main(argv=None) -> int:
     print(f"Routed to Related Reports block : {related}")
     print(f"Anchors rotated from bank       : {anchor_assigned}")
 
+    # ── re-validate against the FINAL placement + anchor ─────────────────────
+    # Agent 10 ran once already, inside Agent 6, against the placeholder
+    # placement_type Agent 6 assigns at generation time. Placement and anchor
+    # both changed above (real sentence found, anchor rotated), so the stored
+    # risk_flag / risk_reason / validation_status is stale until re-checked
+    # against what will actually ship. Without this, an approved-looking
+    # recommendation could carry a risk note describing a placement it no
+    # longer has.
+    validator = SEOValidationAgent(DB_PATH)
+    revalidated = {"approved_for_review": 0, "needs_revision": 0, "rejected": 0}
+    for u in updates:
+        v = validator.validate(
+            u["source"], u["target"], u.get("anchor_text", ""), u["placement_type"])
+        u["validation_status"] = v.overall_status
+        u["risk_flag"] = ("high" if v.overall_status == "rejected" else
+                          "medium" if v.overall_status == "needs_revision" else "low")
+        u["risk_reason"] = "; ".join(
+            f"{rf.rule}: {rf.description}" for rf in v.risk_flags) or None
+        revalidated[v.overall_status] = revalidated.get(v.overall_status, 0) + 1
+    print(f"Re-validated against final placement: {revalidated}")
+
     if args.dry_run:
         print("\nDRY RUN - nothing written. Samples:")
         for u in updates[:6]:
@@ -172,11 +195,16 @@ def main(argv=None) -> int:
         conn.execute("BEGIN IMMEDIATE")
         for u in updates:
             sets = ["placement_type=?", "placement_section=?",
-                    "suggested_sentence=?", "updated_at=?"]
+                    "suggested_sentence=?", "validation_status=?",
+                    "risk_flag=?", "risk_reason=?", "updated_at=?"]
             params = [u["placement_type"], u["placement_section"],
-                      u["suggested_sentence"], now]
+                      u["suggested_sentence"], u["validation_status"],
+                      u["risk_flag"], u["risk_reason"], now]
             if "anchor_text" in u:
                 sets.append("anchor_text=?"); params.append(u["anchor_text"])
+            # a link the final validation rejects must never sit as 'pending'
+            if u["validation_status"] == "rejected":
+                sets.append("status=?"); params.append("rejected")
             params.append(u["id"])
             conn.execute(f"UPDATE link_recommendations SET {', '.join(sets)} "
                          "WHERE recommendation_id=?", params)

@@ -70,8 +70,17 @@ FACETED_QUERY_KEYS = {
 }
 FACETED_PATH_HINTS = ("/search", "/filter", "/sort")
 
+# master PRD 18.6 placement priority, PLUS the actual values Agent 6 / the
+# contextual-placement script emit. The two vocabularies drifted apart:
+# Agent 10 was written against the PRD's abstract names; Agent 6 emits its own
+# concrete names for the same concepts. Both are accepted so a real
+# recommendation is never flagged "unknown" just because the two agents used a
+# different word for the same placement. body_paragraph and contextual_body
+# are the same thing; likewise related_report_module / related_reports_block.
 PLACEMENT_PRIORITY = [
-    "body_paragraph", "section_block", "related_report_module",
+    "body_paragraph", "contextual_body",
+    "section_block", "hub_link",
+    "related_report_module", "related_reports_block",
     "evidence_block", "toc_section", "sidebar", "footer",
 ]
 
