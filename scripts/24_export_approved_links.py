@@ -29,7 +29,8 @@ DB_PATH = "ken_links.db"
 COLUMNS = [
     "recommendation_id", "source_url", "target_url", "anchor_text",
     "placement_type", "placement_section", "suggested_sentence",
-    "relationship_type", "link_score", "score_band", "approved_by",
+    "relationship_type", "relationship_class", "market_match_score",
+    "technology_match_score", "link_score", "score_band", "approved_by",
     "recommendation_reason", "editorial_note", "updated_at",
 ]
 

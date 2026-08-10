@@ -84,6 +84,13 @@ PLACEMENT = {
     "case_study_support":     ("evidence_block", "Case Study Evidence"),
 }
 
+# Related-report blocks are a separate PRD placement path from contextual body
+# links. Adjacent reports should not need exact same-market/geography scores;
+# they need strong topical similarity and a real report-to-report target.
+RELATED_REPORT_MIN_SEMANTIC = 0.40
+RELATED_REPORT_MIN_MARKET = 0.30
+RELATED_REPORT_MIN_SCORE = 50.0
+
 # master PRD 17.2 score bands.
 def band(score: float) -> str:
     if score >= 90: return "priority"
@@ -101,6 +108,9 @@ class Recommendation:
     target_url: str
     target_canonical_url: str
     relationship_type: str
+    relationship_class: str
+    market_match_score: float
+    technology_match_score: float
     anchor_text: str
     placement_type: str
     placement_section: str
@@ -126,6 +136,42 @@ class LinkRecommendationAgent:
         conn = sqlite3.connect(f"file:{self.db_path.resolve()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         return conn
+
+    # Related-report blocks are a separate PRD placement path from contextual
+    # body links. Adjacent reports should not need exact same-market/geography
+    # scores; they need strong topical similarity and a real report target.
+    @staticmethod
+    def _is_related_report_edge(edge: sqlite3.Row) -> bool:
+        return (
+            edge["relationship_type"] == "adjacent_market"
+            and edge["s_type"] == "report"
+            and edge["t_type"] == "report"
+            and (edge["semantic_similarity_score"] or 0.0) >= RELATED_REPORT_MIN_SEMANTIC
+            and (edge["market_match_score"] or 0.0) >= RELATED_REPORT_MIN_MARKET
+            and (edge["technology_match_score"] or 0.0) >= 0.50
+        )
+
+    @staticmethod
+    def _related_report_score(edge: sqlite3.Row, factors: dict) -> float:
+        """Score for related-report block candidates.
+
+        This intentionally weights semantic closeness and edge confidence over
+        exact market/geography match. Adjacent reports are useful because they
+        broaden discovery inside the same industry, not because they describe
+        the identical market in the same country.
+        """
+        semantic = edge["semantic_similarity_score"] or 0.0
+        confidence = edge["confidence_score"] or 0.0
+        market = edge["market_match_score"] or 0.0
+        technology = edge["technology_match_score"] or 0.0
+        score = 100.0 * (
+            market * 0.45
+            + technology * 0.30
+            + semantic * 0.10
+            + confidence * 0.10
+            + factors["business_value"] * 0.05
+        )
+        return max(RELATED_REPORT_MIN_SCORE, score)
 
     # ── anchor text (descriptive, never generic) ─────────────────────────────
     @staticmethod
@@ -156,7 +202,9 @@ class LinkRecommendationAgent:
             sig = self._load_signals(conn)
             q = """SELECT e.*,
                           s.url AS s_url, s.page_authority_score AS s_auth,
+                          s.content_type AS s_type,
                           t.url AS t_url, t.canonical_url AS t_canon, t.title AS t_title,
+                          t.content_type AS t_type,
                           t.market AS t_market, t.country AS t_country,
                           t.business_priority AS t_bp, t.ai_readiness_score AS t_ai,
                           t.search_opportunity_score AS t_so
@@ -181,6 +229,7 @@ class LinkRecommendationAgent:
                     "semantic_similarity": e["semantic_similarity_score"] or 0.0,
                     "entity_overlap": e["entity_overlap_score"] or 0.0,
                     "market_relationship": e["market_match_score"] or 0.0,
+                    "technology_relationship": e["technology_match_score"] or 0.0,
                     "geography": e["geo_match_score"] or 0.0,
                     "search_intent": 1.0 if tid in sig["striking"] else (
                         0.5 if tid in sig["has_impr"] else 0.0),
@@ -196,6 +245,8 @@ class LinkRecommendationAgent:
                 seo = 100.0 * (f["semantic_similarity"]*16 + f["entity_overlap"]*12
                                + f["market_relationship"]*10 + f["geography"]*8
                                + f["crawl_priority"]*5) / (16+12+10+8+5)
+                if self._is_related_report_edge(e):
+                    score = max(score, self._related_report_score(e, f))
                 b = band(score)
                 if b == "drop":
                     continue  # never pad: below 50 is not recommended
@@ -217,6 +268,9 @@ class LinkRecommendationAgent:
                     source_url=e["s_url"], target_url=e["t_url"],
                     target_canonical_url=e["t_canon"] or e["t_url"],
                     relationship_type=e["relationship_type"],
+                    relationship_class=e["relationship_class"] or e["relationship_type"],
+                    market_match_score=round(e["market_match_score"] or 0.0, 3),
+                    technology_match_score=round(e["technology_match_score"] or 0.0, 3),
                     anchor_text=anchor,
                     placement_type=placement_type, placement_section=placement_section,
                     link_score=round(score, 1), seo_score=round(seo, 1),
@@ -245,9 +299,12 @@ class LinkRecommendationAgent:
     @staticmethod
     def _reason(e, anchor, b) -> str:
         rel = e["relationship_type"].replace("_", " ")
-        return (f"{e['s_url'].split('/')[-1]} and {e['t_url'].split('/')[-1]} share "
-                f"a {rel} relationship (confidence {e['confidence_score']:.2f}); "
-                f"link with anchor '{anchor}' [{b}].")
+        relationship_class = e["relationship_class"] or rel
+        return (f"{e['s_url'].split('/')[-1]} and {e['t_url'].split('/')[-1]} pass "
+                f"the market/technology relevance gate as {relationship_class} "
+                f"(market {e['market_match_score'] or 0.0:.2f}, technology "
+                f"{e['technology_match_score'] or 0.0:.2f}, confidence "
+                f"{e['confidence_score']:.2f}); link with anchor '{anchor}' [{b}].")
 
     def write(self, recs: list[Recommendation]) -> int:
         if not recs:
@@ -264,12 +321,14 @@ class LinkRecommendationAgent:
                     """INSERT INTO link_recommendations
                        (recommendation_id, source_node_id, target_node_id,
                         source_url, target_url, target_canonical_url,
-                        relationship_type, anchor_text, placement_type,
-                        placement_section, link_score, seo_score, business_score,
+                        relationship_type, relationship_class,
+                        market_match_score, technology_match_score,
+                        anchor_text, placement_type, placement_section,
+                        link_score, seo_score, business_score,
                         ai_readiness_score, confidence_score, score_band,
                         risk_flag, risk_reason, recommendation_reason,
                         validation_status, status, created_by, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'agent_6',?,?)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'agent_6',?,?)
                        ON CONFLICT (source_node_id, target_node_id, relationship_type)
                        DO UPDATE SET
                            anchor_text=excluded.anchor_text,
@@ -280,15 +339,41 @@ class LinkRecommendationAgent:
                            validation_status=excluded.validation_status,
                            risk_flag=excluded.risk_flag,
                            risk_reason=excluded.risk_reason,
+                           relationship_class=excluded.relationship_class,
+                           market_match_score=excluded.market_match_score,
+                           technology_match_score=excluded.technology_match_score,
                            recommendation_reason=excluded.recommendation_reason,
                            updated_at=excluded.updated_at""",
                     (str(uuid.uuid4()), r.source_node_id, r.target_node_id,
                      r.source_url, r.target_url, r.target_canonical_url,
-                     r.relationship_type, r.anchor_text, r.placement_type,
-                     r.placement_section, r.link_score, r.seo_score, r.business_score,
+                     r.relationship_type, r.relationship_class,
+                     r.market_match_score, r.technology_match_score,
+                     r.anchor_text, r.placement_type, r.placement_section,
+                     r.link_score, r.seo_score, r.business_score,
                      r.ai_readiness_score, r.confidence_score, r.score_band,
                      r.risk_flag, r.risk_reason, r.recommendation_reason,
                      r.validation_status, status, now, now),
+                )
+
+            # Rebuilding recommendations must also retire stale machine-made
+            # pending rows. Human-approved/rejected rows are audit decisions
+            # and are deliberately preserved.
+            current_keys = {
+                (r.source_node_id, r.target_node_id, r.relationship_type)
+                for r in recs
+            }
+            stale_ids = [
+                row[0] for row in conn.execute(
+                    "SELECT recommendation_id, source_node_id, target_node_id, "
+                    "relationship_type FROM link_recommendations "
+                    "WHERE created_by='agent_6' AND status='pending'"
+                )
+                if (row[1], row[2], row[3]) not in current_keys
+            ]
+            for recommendation_id in stale_ids:
+                conn.execute(
+                    "DELETE FROM link_recommendations WHERE recommendation_id=?",
+                    (recommendation_id,),
                 )
             conn.commit()
         except Exception:

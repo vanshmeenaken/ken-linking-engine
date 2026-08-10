@@ -1046,6 +1046,7 @@ def get_review_queue(limit: int = Query(50, ge=1, le=500)):
     conn = get_db()
     rows = conn.execute(
         """SELECT recommendation_id, source_url, target_url, relationship_type,
+                  relationship_class, market_match_score, technology_match_score,
                   anchor_text, placement_type, placement_section,
                   suggested_sentence, link_score, seo_score, business_score,
                   score_band, risk_flag, recommendation_reason
@@ -1075,7 +1076,8 @@ def get_recommendation_stats():
     # build every group BEFORE closing the connection
     result = {"total": total, "avg_link_score": avg,
               "by_band": group("score_band"), "by_status": group("status"),
-              "by_validation": group("validation_status")}
+              "by_validation": group("validation_status"),
+              "by_relationship_class": group("relationship_class")}
     conn.close()
     return result
 
@@ -1089,6 +1091,7 @@ def list_recommendations(
     band: Optional[str] = Query(None, description="priority | strong | secondary | hold"),
     status: Optional[str] = Query(None, description="pending | approved | rejected | deployed"),
     relationship_type: Optional[str] = Query(None),
+    relationship_class: Optional[str] = Query(None),
 ):
     """List link recommendations with full context, highest score first."""
     conn = get_db()
@@ -1099,11 +1102,14 @@ def list_recommendations(
         where.append("LOWER(status) = LOWER(?)"); params.append(status)
     if relationship_type:
         where.append("LOWER(relationship_type) = LOWER(?)"); params.append(relationship_type)
+    if relationship_class:
+        where.append("LOWER(relationship_class) = LOWER(?)"); params.append(relationship_class)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(
         f"SELECT COUNT(*) FROM link_recommendations {where_sql}", params).fetchone()[0]
     rows = conn.execute(
         f"""SELECT recommendation_id, source_url, target_url, relationship_type,
+                   relationship_class, market_match_score, technology_match_score,
                    anchor_text, placement_type, placement_section, link_score,
                    seo_score, business_score, ai_readiness_score, confidence_score,
                    score_band, risk_flag, risk_reason, recommendation_reason,
@@ -1264,11 +1270,13 @@ def get_page_recommendations(node_id: str):
         raise HTTPException(status_code=404, detail=f"Page '{node_id}' not found")
     outgoing = conn.execute(
         """SELECT target_url, anchor_text, link_score, score_band,
+                  relationship_class, market_match_score, technology_match_score,
                   placement_type, placement_section, suggested_sentence
            FROM link_recommendations WHERE source_node_id = ?
            ORDER BY link_score DESC""", (node_id,)).fetchall()
     incoming = conn.execute(
         """SELECT source_url, anchor_text, link_score, score_band,
+                  relationship_class, market_match_score, technology_match_score,
                   placement_type, placement_section, suggested_sentence
            FROM link_recommendations WHERE target_node_id = ?
            ORDER BY link_score DESC""", (node_id,)).fetchall()

@@ -5,6 +5,7 @@ from analysis.tfidf_similarity import build_corpus
 from analysis.subject_similarity import (
     detect_tech_qualifier,
     has_compound_structure,
+    market_technology_relevance,
     subject_similarity,
     tech_intersection_ok,
     weighted_vector,
@@ -186,3 +187,31 @@ def test_known_good_pairs_stay_meaningfully_similar():
     corpus = build_corpus(docs)
     for a, b in pairs:
         assert subject_similarity(corpus, a, b) > 0.3
+
+
+# Market + technology business gate
+
+def test_market_technology_gate_accepts_rehabilitation_ecosystem():
+    pairs = [
+        ("Global Rehabilitation Equipment Market", "Global Rehabilitation Robots Market"),
+        ("Global Rehabilitation Equipment Market", "GCC Digital Rehabilitation Solutions Market"),
+        ("Global Rehabilitation Equipment Market", "Global Outpatient Rehabilitation Centers Market"),
+    ]
+    corpus = build_corpus([title for pair in pairs for title in pair])
+    for source, target in pairs:
+        result = market_technology_relevance(corpus, source, target, context_similarity=0.35)
+        assert result.accepted, (source, target, result)
+        assert result.market_score >= 0.25
+        assert result.technology_score >= 0.50
+
+
+def test_market_technology_gate_rejects_half_subject_technology_match():
+    pairs = [
+        ("AI in Medicine Market", "Herbal Medicine Market"),
+        ("Automotive Coolant Market", "Automotive Parts Market"),
+        ("Blood Screening Market", "Blood IV Warmers Market"),
+    ]
+    corpus = build_corpus([title for pair in pairs for title in pair])
+    for source, target in pairs:
+        result = market_technology_relevance(corpus, source, target, context_similarity=0.35)
+        assert not result.accepted, (source, target, result)

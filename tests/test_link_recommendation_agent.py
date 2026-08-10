@@ -78,6 +78,40 @@ def test_no_double_market_in_stored_anchors():
     assert bad == 0
 
 
+def test_adjacent_report_recommendations_are_included():
+    # Adjacent/related report links belong in Related Reports blocks even when
+    # they do not share the exact same market or geography.
+    conn = sqlite3.connect("ken_links.db")
+    count = conn.execute(
+        """SELECT COUNT(*)
+           FROM link_recommendations lr
+           JOIN content_nodes s ON s.node_id = lr.source_node_id
+           JOIN content_nodes t ON t.node_id = lr.target_node_id
+           WHERE lr.relationship_type = 'adjacent_market'
+             AND s.content_type = 'report'
+             AND t.content_type = 'report'
+             AND lr.placement_type = 'related_reports_block'"""
+    ).fetchone()[0]
+    conn.close()
+    assert count >= 10
+
+
+def test_adjacent_recommendations_pass_market_technology_gate():
+    conn = sqlite3.connect("ken_links.db")
+    bad = conn.execute(
+        """SELECT COUNT(*) FROM link_recommendations
+           WHERE relationship_type='adjacent_market'
+             AND (market_match_score < 0.30 OR technology_match_score < 0.50)"""
+    ).fetchone()[0]
+    classes = {
+        row[0] for row in conn.execute(
+            "SELECT DISTINCT relationship_class FROM link_recommendations"
+        )
+    }
+    conn.close()
+    assert bad == 0
+    assert classes <= {"regional", "adjacent", "adjacent_regional"}
+
 def test_no_duplicate_source_target_pairs():
     # Regression: two pages can share more than one relationship type; the same
     # source->target link must still be recommended only once (highest score).

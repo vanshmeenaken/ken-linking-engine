@@ -91,6 +91,8 @@ class RelationshipEdge(Base):
     entity_overlap_score = Column(Float)
     geo_match_score = Column(Float)
     market_match_score = Column(Float)
+    technology_match_score = Column(Float)
+    relationship_class = Column(String)
     business_value_score = Column(Float)
     seo_value_score = Column(Float)
     created_by = Column(String)

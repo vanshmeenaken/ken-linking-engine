@@ -754,7 +754,7 @@ async function loadRecommendations() {
     <table>
       <thead>
         <tr><th>From Page</th><th>Should Link To</th><th>Anchor Text</th>
-            <th>Where It Goes</th><th>Score</th><th>Review</th></tr>
+            <th>Relationship</th><th>Where It Goes</th><th>Score</th><th>Review</th></tr>
       </thead>
       <tbody>
         ${queue.recommendations.map(r => {
@@ -770,17 +770,21 @@ async function loadRecommendations() {
                  No single sentence fits well — shown as a related-reports link instead.
                </div>`;
           const id = r.recommendation_id;
+          const relationshipLabel = (r.relationship_class || r.relationship_type || "").replace(/_/g, " ");
+          const marketPct = Math.round((r.market_match_score || 0) * 100);
+          const technologyPct = Math.round((r.technology_match_score || 0) * 100);
           return `
           <tr>
             <td><a href="${r.source_url}" target="_blank" rel="noopener">${r.source_url.split("/").pop()}</a></td>
             <td><a href="${r.target_url}" target="_blank" rel="noopener">${r.target_url.split("/").pop()}</a></td>
             <td>${r.anchor_text}</td>
+            <td><strong>${relationshipLabel}</strong><div class="panel-note">Market ${marketPct}% / Technology ${technologyPct}%</div></td>
             <td style="max-width:340px;">${whereCell}</td>
             <td><span class="badge ${REC_BAND[r.score_band] || "low"}">${r.link_score} ${r.score_band}</span></td>
             <td><button class="small-btn review" onclick="toggleReviewNote('${id}')">Explain</button></td>
           </tr>
           <tr id="review-row-${id}" style="display:none;">
-            <td colspan="6"><div id="review-note-${id}" class="review-note"></div></td>
+            <td colspan="7"><div id="review-note-${id}" class="review-note"></div></td>
           </tr>`;
         }).join("")}
       </tbody>

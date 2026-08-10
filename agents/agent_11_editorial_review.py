@@ -106,6 +106,14 @@ def build_review_note(rec: dict, source_title: str, target_title: str) -> Review
     risk_val = _risk_word(rec.get("risk_flag"))
     relationship = _relationship_sentence(
         rec["relationship_type"], source_title, target_title)
+    relationship_class = (rec.get("relationship_class") or rec["relationship_type"]).replace("_", " ")
+    market_score = float(rec.get("market_match_score") or 0.0)
+    technology_score = float(rec.get("technology_match_score") or 0.0)
+    relationship = (
+        f"Classification: {relationship_class}. Market relevance: "
+        f"{market_score:.0%}; technology relevance: {technology_score:.0%}. "
+        f"{relationship}"
+    )
     where = _placement_sentence(rec)
 
     why = (f'Recommended with a score of {rec["link_score"]:.0f} out of 100 '

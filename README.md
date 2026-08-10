@@ -19,7 +19,7 @@ Automatically discovers, scores, and recommends internal links based on:
 
 - **500+ URLs** processed in Phase 1
 - **30-column** content inventory schema
-- **19-column** relationship scoring system
+- **21-column** relationship scoring system
 - **14 agents** planned for full system
 - **12 MCP servers** for data access and CMS integration
 
@@ -125,7 +125,7 @@ ken-linking-engine/
 
 - **content_nodes** (30 cols) — Pages and content items
 - **content_entities** (12 cols) — Markets, industries, entities
-- **relationship_edges** (19 cols) — Typed connections with scoring
+- **relationship_edges** (21 cols) — Typed connections with scoring
 - **crawl_logs** (10 cols) — Operation history
 
 See `source_of_truth/SCHEMA_VISUAL.md` for complete reference.
@@ -201,19 +201,20 @@ Full request/response examples: **[docs/API.md](docs/API.md)**.
 
 ## Current Status
 
-Phase 1 and Phase 2 are complete. Phase 3 is active and the current recommendation batch has completed editorial review.
+Phase 1 and Phase 2 are complete. Phase 3 is active. The recommendation engine now gates report links on market relevance (65%) and technology relevance (35%), then classifies accepted links as regional, adjacent, or adjacent-regional.
 
 - 500 pages in the local inventory.
 - 447 entities and 2,021 page-to-entity mappings.
-- 110 relationship edges.
-- 42 link recommendations generated.
-- 42/42 recommendations passed SEO validation as low-risk review candidates.
+- 108 relationship edges after the market/technology rebuild.
+- 88 link recommendations generated.
 - 26 recommendations approved for manual deployment.
 - 16 recommendations rejected during editorial review.
+- 46 recommendations pending editorial review.
+- Every adjacent recommendation has market relevance >= 0.30 and technology relevance >= 0.50.
 - Web-team handover CSV: `reports/approved_links_handover_phase3.csv`.
 - Current Phase 3 handoff: `docs/05-PHASES/PHASE-3/01-HANDOFF.md`.
 
-Next PRD work: reviewer sanity-check of the approved CSV, manual implementation by the web team, broader catalog coverage, stronger GSC/GA4 prioritization, and later CMS deployment workflow.
+Next PRD work: review the 46 pending recommendations, reviewer sanity-check of the approved CSV, manual implementation by the web team, broader catalog coverage, stronger GSC/GA4 prioritization, and later CMS deployment workflow.
 
 ## 📞 Support
 

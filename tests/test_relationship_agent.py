@@ -43,6 +43,7 @@ def _make_db(tmp_path, nodes, entities):
             relationship_direction TEXT, confidence_score REAL,
             semantic_similarity_score REAL, entity_overlap_score REAL,
             geo_match_score REAL, market_match_score REAL,
+            technology_match_score REAL, relationship_class TEXT,
             business_value_score REAL, seo_value_score REAL,
             created_by TEXT, status TEXT DEFAULT 'pending',
             created_at TEXT, updated_at TEXT,
@@ -541,3 +542,28 @@ def test_edges_default_status_pending(tmp_path):
     statuses = [r[0] for r in conn.execute("SELECT status FROM relationship_edges")]
     conn.close()
     assert all(s == "pending" for s in statuses)
+
+
+def test_adjacent_edge_records_market_technology_and_geo_class(tmp_path):
+    db = _make_db(
+        tmp_path,
+        nodes=[
+            {"node_id": "n1", "title": "Global Rehabilitation Equipment Market"},
+            {"node_id": "n2", "title": "Qatar Rehabilitation Robots Market"},
+        ],
+        entities=[
+            ("n1", "industry", "Healthcare", "primary_industry"),
+            ("n1", "market", "Rehabilitation Equipment Market", "primary_market"),
+            ("n1", "region", "Global", "primary_region"),
+            ("n2", "industry", "Healthcare", "primary_industry"),
+            ("n2", "market", "Rehabilitation Robots Market", "primary_market"),
+            ("n2", "country", "Qatar", "primary_country"),
+            ("n2", "region", "Middle East", "primary_region"),
+        ],
+    )
+    result, _ = RelationshipMappingAgent(db_path=db).run(dry_run=True)
+    adjacent = [e for e in result.edges if e.relationship_type == "adjacent_market"]
+    assert len(adjacent) == 1
+    assert adjacent[0].relationship_class == "adjacent_regional"
+    assert adjacent[0].market_match_score >= 0.25
+    assert adjacent[0].technology_match_score >= 0.50

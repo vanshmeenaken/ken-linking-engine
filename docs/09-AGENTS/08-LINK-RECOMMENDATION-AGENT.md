@@ -45,6 +45,20 @@ sentiment/external (2, out of scope).
 Anything below 50 is never written. The project quality bar is never to pad:
 a short set of correct recommendations beats a long noisy one.
 
+## Market and Technology Relevance Gate
+
+Report-to-report candidates are accepted only after two independent business signals pass. Market relevance carries 65% of the combined relevance score and must be at least 0.30. Technology relevance carries 35% and must be at least 0.50. Geography cannot create relevance; it is evaluated only after the pair passes.
+
+Accepted links are classified as:
+
+- `regional`: the same or synonymous market in another geography
+- `adjacent`: a closely related market and technology in the same/global scope
+- `adjacent_regional`: a closely related market and technology in another geography
+
+Broad-to-specialized links are supported when the technology-specific report retains the source market core, such as Rehabilitation Equipment to Rehabilitation Robots. Shared industry, geography, or generic title words are insufficient. Related report scoring gives 45% to market relevance and 30% to technology relevance, so these two signals dominate the final recommendation.
+
+Adjacent report links use `placement_type = related_reports_block` and still require editorial approval. The optional `--use-llm-judge` flag can send prefiltered titles to a configured external model for a final semantic check; it is disabled by default so report metadata is not disclosed externally without an explicit decision.
+
 ## Anchor text
 
 A descriptive anchor is built from the target's country and market
@@ -55,9 +69,9 @@ emits "... Market Market". If structured fields are missing it falls back to a
 cleaned title with a lower anchor-quality score. Generic anchors ("click here",
 "read more") are never produced, and Agent 10 rejects them if they ever were.
 
-This is the inline seed of Agent 7. A full Agent 7 that builds diverse anchor
-banks per target (to prevent any single exact-match anchor dominating) is a
-later Phase 3 step.
+Agent 7 builds diverse anchor banks per target, and
+`scripts/26_rotate_recommendation_anchors.py` rotates those variants across
+inbound recommendations without requiring a live-page crawl.
 
 ## Validation gate
 

@@ -57,7 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from analysis import llm_subject_judge
 from analysis.tfidf_similarity import build_corpus, cosine
-from analysis.subject_similarity import subject_similarity
+from analysis.subject_similarity import market_technology_relevance, subject_similarity
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "ken_links.db"
@@ -78,20 +78,9 @@ CONFIDENCE = {
 
 MAX_SAME_MARKET_PAGES_PER_ENTITY = 12  # precision guard: skip hub-like markets
 
-# adjacent_market / country_region tuning. Both now gated on
-# subject_similarity() (Shrey's 4-layer method, Layers 2+3 — see
-# analysis/subject_similarity.py) instead of plain embedding cosine.
-# Threshold re-validated against live data after the swap: replaying it over
-# the 168 existing adjacent_market pairs and 551 existing country_region
-# pairs, 0.25 keeps the same "genuine cross-geography subject match" band
-# the original dry-run found (0.30-0.40 for strong matches like infusion
-# pumps <-> insulin infusion pumps) while now correctly zeroing out pairs
-# that only shared generic words/years (e.g. the reported Bone Growth
-# Stimulator <-> Microscope country_region edge, both just "...Outlook to
-# 2030" — old score 0.15, new score 0.002). At this bar country_region drops
-# from 551 candidate pairs to ~7 genuine ones; that's the fix, not a bug —
-# most of those 551 never shared a real subject, only a region + industry.
-ADJACENT_SIMILARITY_THRESHOLD = 0.25
+# country_region remains gated by title-level subject similarity. Adjacent
+# report pairs use the separate market/technology gate in
+# analysis/subject_similarity.py; geography is only classified afterwards.
 COUNTRY_REGION_SIMILARITY_THRESHOLD = 0.25
 MAX_ADJACENT_PER_PAGE = 5
 
@@ -107,6 +96,8 @@ class Edge:
     geo_match_score: float
     market_match_score: float
     reason: str
+    technology_match_score: float = 0.0
+    relationship_class: str = ""
     source_entity_id: str = ""
     target_entity_id: str = ""
     semantic_similarity_score: float | None = None
@@ -130,10 +121,12 @@ class RunResult:
 class RelationshipMappingAgent:
     """Deterministic relationship-edge builder over the Phase 2 entity graph."""
 
-    def __init__(self, db_path=DEFAULT_DB, logger=None):
+    def __init__(self, db_path=DEFAULT_DB, logger=None, use_llm_judge=False):
         self.db_path = Path(db_path)
         self.logger = logger or logging.getLogger("relationship_mapping_agent")
         self.run_id = str(uuid.uuid4())
+        self._llm_judgments: dict[tuple[str, str], bool] = {}
+        self.use_llm_judge = use_llm_judge
 
     # ── load ────────────────────────────────────────────────────────────────
 
@@ -213,7 +206,7 @@ class RelationshipMappingAgent:
         titles = self._load_titles(nodes)
         subject_corpus = build_corpus(list(titles.values()))
 
-        result.edges.extend(self._same_market_edges(market_pages, nodes, result))
+        result.edges.extend(self._same_market_edges(market_pages, nodes, result, scope))
         result.edges.extend(
             self._country_region_edges(scope, node_industries, titles, subject_corpus)
         )
@@ -224,7 +217,10 @@ class RelationshipMappingAgent:
         result.parent_updates = self._market_parent_map(node_entities)
         result.edges.extend(self._support_edges(nodes, node_markets))
         result.edges.extend(
-            self._adjacent_market_edges(node_markets, node_industries, titles, subject_corpus)
+            self._adjacent_market_edges(
+                node_markets, node_industries, titles, subject_corpus, scope,
+                self._load_embeddings(),
+            )
         )
 
         # Final scoring pass: populate semantic_similarity_score and
@@ -253,14 +249,20 @@ class RelationshipMappingAgent:
             conn.close()
         return self._embeddings
 
-    @staticmethod
-    def _llm_confirms(title_a: str, title_b: str) -> bool:
+    def _llm_confirms(self, title_a: str, title_b: str) -> bool:
         """Layer 4 final check on a candidate that already passed Layers
         2+3. Optional/credential-gated (analysis/llm_subject_judge.py) — a
         missing key or any API failure returns None, which this treats as
         "no opinion, trust the deterministic score" (True), never as a
         rejection. Only an explicit False from the LLM drops the edge."""
-        return llm_subject_judge.judge(title_a, title_b) is not False
+        if not self.use_llm_judge:
+            return True
+        key = tuple(sorted((title_a, title_b)))
+        if key not in self._llm_judgments:
+            self._llm_judgments[key] = (
+                llm_subject_judge.judge(*key, allow_nvidia=True) is not False
+            )
+        return self._llm_judgments[key]
 
     def _load_titles(self, nodes: dict[str, sqlite3.Row]) -> dict[str, str]:
         """node_id -> subject text for subject_similarity(): title, falling
@@ -310,17 +312,21 @@ class RelationshipMappingAgent:
         }
         return self._seo_signals
 
-    def _adjacent_market_edges(self, node_markets, node_industries, titles, corpus) -> list[Edge]:
-        """Same industry, DIFFERENT market, high SUBJECT similarity — the
-        master PRD 'adjacent market' relationship (§15.1). Uses
-        subject_similarity() (Shrey's 4-layer method, Layers 2+3), not plain
-        embedding cosine: plain cosine let generic shared words ("market",
-        "3pl", a shared forecast year) drive matches between unrelated
-        subjects. The same-industry guard removes cross-industry geography
-        noise; the different-market requirement makes it 'adjacent' not
-        'same'; subject_similarity's tech-intersection gate additionally
-        blocks compound-topic false positives ("AI in Medicine" matching
-        "AI in Robotics")."""
+    @staticmethod
+    def _adjacent_class(scope_a: dict, scope_b: dict) -> str:
+        """Classify geography only after market/technology relevance passes."""
+        geo_a = (scope_a.get("country") or scope_a.get("region") or "global").lower()
+        geo_b = (scope_b.get("country") or scope_b.get("region") or "global").lower()
+        return "adjacent_regional" if geo_a != geo_b else "adjacent"
+
+    def _adjacent_market_edges(self, node_markets, node_industries, titles, corpus,
+                               scope, embeddings) -> list[Edge]:
+        """Different-market report pairs gated by market and technology.
+
+        Market relevance carries 65% and technology relevance 35%. Geography
+        never creates a candidate; it only labels an accepted candidate as
+        adjacent or adjacent_regional.
+        """
         edges = []
         seen = set()
         market_holders = [n for n in node_markets if titles.get(n)]
@@ -333,29 +339,42 @@ class RelationshipMappingAgent:
             for b in market_holders:
                 if b == a:
                     continue
-                # same industry, different market
                 if not (a_industries & node_industries.get(b, set())):
                     continue
                 if a_markets & set(node_markets.get(b, [])):
-                    continue  # same market -> that's same_market, not adjacent
-                sim = subject_similarity(corpus, titles[a], titles[b])
-                if sim >= ADJACENT_SIMILARITY_THRESHOLD and self._llm_confirms(titles[a], titles[b]):
-                    scored.append((sim, b))
-            scored.sort(reverse=True)
-            for sim, b in scored[:MAX_ADJACENT_PER_PAGE]:
+                    continue
+                context = cosine(embeddings.get(a, {}), embeddings.get(b, {}))
+                relevance = market_technology_relevance(
+                    corpus, titles[a], titles[b], context_similarity=context,
+                )
+                if relevance.accepted and self._llm_confirms(titles[a], titles[b]):
+                    scored.append((relevance.combined_score, b, relevance))
+            scored.sort(reverse=True, key=lambda item: item[0])
+            for _, b, relevance in scored[:MAX_ADJACENT_PER_PAGE]:
                 lo, hi = sorted((a, b))
                 if (lo, hi, "adjacent_market") in seen:
                     continue
                 seen.add((lo, hi, "adjacent_market"))
+                relationship_class = self._adjacent_class(
+                    scope.get(lo, {}), scope.get(hi, {}),
+                )
                 edges.append(Edge(
                     source_node_id=lo, target_node_id=hi,
                     relationship_type="adjacent_market",
                     relationship_direction="bidirectional",
-                    confidence_score=round(min(0.85, CONFIDENCE["adjacent_market"] + sim * 0.5), 2),
-                    entity_overlap_score=0.5, geo_match_score=0.0,
-                    market_match_score=0.0,
-                    semantic_similarity_score=round(sim, 3),
-                    reason=f"Same industry, different market, subject similarity {sim:.2f}",
+                    confidence_score=round(
+                        min(0.90, CONFIDENCE["adjacent_market"] +
+                            relevance.combined_score * 0.35), 2
+                    ),
+                    entity_overlap_score=0.5, geo_match_score=(
+                        0.5 if relationship_class == "adjacent_regional" else 1.0
+                    ),
+                    market_match_score=relevance.market_score,
+                    technology_match_score=relevance.technology_score,
+                    relationship_class=relationship_class,
+                    semantic_similarity_score=relevance.combined_score,
+                    reason=f"Market/technology gate passed: {relevance.reason}; "
+                           f"class {relationship_class}",
                 ))
         return edges
 
@@ -392,10 +411,15 @@ class RelationshipMappingAgent:
             region = next(
                 (e["entity_name"] for e in ents if e["entity_type"] == "region"), ""
             )
-            scope[node_id] = {"is_local": has_country, "region": region}
+            country = next(
+                (e["entity_name"] for e in ents if e["entity_type"] == "country"), ""
+            )
+            scope[node_id] = {
+                "is_local": has_country, "country": country, "region": region,
+            }
         return scope
 
-    def _same_market_edges(self, market_pages, nodes, result: RunResult) -> list[Edge]:
+    def _same_market_edges(self, market_pages, nodes, result: RunResult, scope) -> list[Edge]:
         edges = []
         for entity_id, page_ids in market_pages.items():
             unique_pages = sorted(set(page_ids))
@@ -411,13 +435,17 @@ class RelationshipMappingAgent:
             for i in range(len(unique_pages)):
                 for j in range(i + 1, len(unique_pages)):
                     a, b = sorted((unique_pages[i], unique_pages[j]))
+                    geo_a = (scope.get(a, {}).get("country") or scope.get(a, {}).get("region") or "global").lower()
+                    geo_b = (scope.get(b, {}).get("country") or scope.get(b, {}).get("region") or "global").lower()
+                    relationship_class = "regional" if geo_a != geo_b else "adjacent"
                     edges.append(Edge(
                         source_node_id=a, target_node_id=b,
                         relationship_type="same_market",
                         relationship_direction="bidirectional",
                         confidence_score=CONFIDENCE["same_market"],
                         entity_overlap_score=1.0, geo_match_score=0.0,
-                        market_match_score=1.0,
+                        market_match_score=1.0, technology_match_score=1.0,
+                        relationship_class=relationship_class,
                         source_entity_id=entity_id, target_entity_id=entity_id,
                         reason=f"Both pages map to the same market entity ({entity_id[:8]})",
                     ))
@@ -487,7 +515,9 @@ class RelationshipMappingAgent:
                             min(0.85, CONFIDENCE["country_region"] + sim * 0.3), 2
                         ),
                         entity_overlap_score=0.5, geo_match_score=1.0,
-                        market_match_score=0.0,
+                        market_match_score=round(sim, 3),
+                        technology_match_score=1.0,
+                        relationship_class="adjacent_regional",
                         semantic_similarity_score=round(sim, 3),
                         reason=f"Region-scope page and a local page both in {region}, "
                                f"same industry, subject similarity {sim:.2f}",
@@ -514,7 +544,8 @@ class RelationshipMappingAgent:
                         relationship_direction="bidirectional",
                         confidence_score=CONFIDENCE["global_local"],
                         entity_overlap_score=1.0, geo_match_score=0.5,
-                        market_match_score=1.0,
+                        market_match_score=1.0, technology_match_score=1.0,
+                        relationship_class="regional",
                         source_entity_id=market_id, target_entity_id=market_id,
                         reason="Same market; one page is global-scope, the other local-scope",
                     ))
@@ -590,7 +621,8 @@ class RelationshipMappingAgent:
                     relationship_direction="source_to_target",
                     confidence_score=CONFIDENCE[rel_type],
                     entity_overlap_score=1.0, geo_match_score=0.0,
-                    market_match_score=1.0,
+                    market_match_score=1.0, technology_match_score=1.0,
+                    relationship_class="adjacent",
                     source_entity_id=market_id, target_entity_id=market_id,
                     reason=f"{ctype.replace('_', ' ').title()} shares its market with this report",
                 ))
@@ -627,9 +659,10 @@ class RelationshipMappingAgent:
                        (edge_id, source_node_id, target_node_id, source_entity_id,
                         target_entity_id, relationship_type, relationship_direction,
                         confidence_score, semantic_similarity_score, entity_overlap_score,
-                        geo_match_score, market_match_score, business_value_score,
-                        seo_value_score, created_by, status, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'agent_3','pending',?,?)
+                        geo_match_score, market_match_score, technology_match_score,
+                        relationship_class, business_value_score, seo_value_score,
+                        created_by, status, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'agent_3','pending',?,?)
                        ON CONFLICT (source_node_id, target_node_id, relationship_type)
                        DO UPDATE SET
                            confidence_score = excluded.confidence_score,
@@ -637,6 +670,8 @@ class RelationshipMappingAgent:
                            entity_overlap_score = excluded.entity_overlap_score,
                            geo_match_score = excluded.geo_match_score,
                            market_match_score = excluded.market_match_score,
+                           technology_match_score = excluded.technology_match_score,
+                           relationship_class = excluded.relationship_class,
                            seo_value_score = excluded.seo_value_score,
                            updated_at = excluded.updated_at""",
                     (str(uuid.uuid4()), e.source_node_id, e.target_node_id,
@@ -644,6 +679,7 @@ class RelationshipMappingAgent:
                      e.relationship_type, e.relationship_direction,
                      e.confidence_score, e.semantic_similarity_score,
                      e.entity_overlap_score, e.geo_match_score, e.market_match_score,
+                     e.technology_match_score, e.relationship_class,
                      e.business_value_score, e.seo_value_score, now, now),
                 )
                 written += 1
@@ -744,6 +780,8 @@ def write_report(result: RunResult, summary: dict, output: Path) -> None:
             "entity_overlap_score": e.entity_overlap_score,
             "geo_match_score": e.geo_match_score,
             "market_match_score": e.market_match_score,
+            "technology_match_score": e.technology_match_score,
+            "relationship_class": e.relationship_class,
             "seo_value_score": e.seo_value_score,
             "business_value_score": e.business_value_score,
             "reason": e.reason,
@@ -773,9 +811,21 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--report")
+    parser.add_argument(
+        "--use-llm-judge", action="store_true",
+        help="Send prefiltered report titles to the configured external LLM judge",
+    )
     args = parser.parse_args(argv)
+    if args.use_llm_judge:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(ROOT / ".env")
+        except ImportError:
+            pass
 
-    agent = RelationshipMappingAgent(args.db, configure_logging())
+    agent = RelationshipMappingAgent(
+        args.db, configure_logging(), use_llm_judge=args.use_llm_judge,
+    )
     report = Path(args.report) if args.report else (
         REPORT_DIR / f"relationship_mapping_{datetime.now():%Y%m%d_%H%M%S}.json"
     )

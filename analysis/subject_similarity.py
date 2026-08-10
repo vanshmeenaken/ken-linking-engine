@@ -33,6 +33,7 @@ separate since it's optional/credential-gated, not always available.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from analysis.tfidf_similarity import Corpus, cosine, tokenize
 from config.taxonomy import COUNTRY_ALIASES, COUNTRY_TO_REGION, INDUSTRIES, REGIONS, SCOPE_VALUES
@@ -155,6 +156,11 @@ GENERIC_TERMS = {
     # hardware) vs "Oman Military Simulation And Virtual Training Market"
     # (training software) share only "military".
     "blood", "military",
+    # Broad product/service heads that created false adjacency despite
+    # different markets (Machine Tools vs Power Tools; fertility clinics vs
+    # pediatric clinics; herpes treatment vs herpangina treatment).
+    "tools", "tool", "treatment", "treatments", "clinic", "clinics",
+    "lab", "labs", "laboratory", "laboratories",
 }
 GENERIC_TERM_WEIGHT = 0.15
 
@@ -178,6 +184,41 @@ TECH_QUALIFIERS = {
     "big data", "cybersecurity",
 }
 
+TECHNOLOGY_FAMILIES = {
+    "ai": "intelligent", "machine learning": "intelligent", "ml": "intelligent",
+    "big data": "intelligent",
+    "robot": "automation", "robots": "automation", "robotic": "automation",
+    "robotics": "automation", "automation": "automation", "smart": "automation",
+    "digital": "digital", "software": "digital", "cloud": "digital", "saas": "digital",
+    "iot": "connected", "5g": "connected",
+    "ar": "immersive", "vr": "immersive",
+    "blockchain": "blockchain", "cybersecurity": "cybersecurity",
+}
+
+# Product-form words do not identify the underlying market. Treating them as
+# core subject words would make "rehabilitation equipment" look unrelated to
+# "rehabilitation robots" even though the latter is a technology-specialized
+# part of the former market.
+MARKET_HEAD_TERMS = {
+    "equipment", "equipments", "product", "products", "device", "devices",
+    "center", "centers", "centre", "centres",
+}
+
+MARKET_WEIGHT = 0.65
+TECHNOLOGY_WEIGHT = 0.35
+MIN_MARKET_RELEVANCE = 0.30
+MIN_TECHNOLOGY_RELEVANCE = 0.50
+MIN_COMBINED_RELEVANCE = 0.44
+
+
+@dataclass(frozen=True)
+class MarketTechnologyRelevance:
+    market_score: float
+    technology_score: float
+    combined_score: float
+    accepted: bool
+    reason: str
+
 
 def detect_tech_qualifier(text: str) -> str:
     """Return the tech qualifier present in text (lowercase), or "" if none."""
@@ -186,6 +227,102 @@ def detect_tech_qualifier(text: str) -> str:
         if re.search(rf"\b{re.escape(term)}\b", lowered):
             return term
     return ""
+
+
+def detect_technology_families(text: str) -> set[str]:
+    """Return normalized technology families explicitly named in a title."""
+    lowered = text.lower()
+    families = set()
+    for term, family in TECHNOLOGY_FAMILIES.items():
+        if re.search(rf"\b{re.escape(term)}\b", lowered):
+            families.add(family)
+    return families
+
+
+def _market_core_tokens(text: str) -> set[str]:
+    tech_tokens = {
+        token
+        for qualifier in TECHNOLOGY_FAMILIES
+        for token in tokenize(qualifier)
+    }
+    return {
+        token for token in tokenize(text)
+        if token not in GEO_TERMS
+        and token not in GENERIC_TERMS
+        and token not in MARKET_HEAD_TERMS
+        and token not in tech_tokens
+        and not _YEAR_TOKEN.match(token)
+    }
+
+
+def _broad_to_specialized_market_match(plain_text: str, tech_text: str) -> bool:
+    """Whether a technology-specific report retains the plain report's core."""
+    plain = _market_core_tokens(plain_text)
+    tech = _market_core_tokens(tech_text)
+    if not plain or not tech:
+        return False
+    return len(plain & tech) / len(plain) >= 0.75
+
+
+def market_technology_relevance(
+    corpus: Corpus,
+    text_a: str,
+    text_b: str,
+    context_similarity: float = 0.0,
+) -> MarketTechnologyRelevance:
+    """Apply the market-first, technology-second recommendation gate.
+
+    Geography is deliberately absent; callers classify geography only after
+    this gate passes.
+    """
+    title_market = cosine(weighted_vector(corpus, text_a), weighted_vector(corpus, text_b))
+    context_market = max(0.0, min(1.0, context_similarity)) * 0.90
+    # Page-body context can strengthen a title-level market relationship, but
+    # it cannot create one. This blocks same-industry prose from linking pairs
+    # whose titles share no real market core.
+    market_score = max(title_market, context_market) if title_market >= 0.15 else title_market
+
+    tech_a = detect_technology_families(text_a)
+    tech_b = detect_technology_families(text_b)
+    if not tech_a and not tech_b:
+        technology_score = 1.0
+        technology_reason = "neither report introduces a conflicting technology"
+    elif tech_a and tech_b:
+        if tech_a & tech_b:
+            technology_score = 1.0
+            technology_reason = "the reports share a technology family"
+        elif {"intelligent", "automation", "digital", "connected"} >= (tech_a | tech_b):
+            technology_score = 0.60
+            technology_reason = "the technologies are compatible digital/automation families"
+        else:
+            technology_score = 0.0
+            technology_reason = "the explicit technologies are unrelated"
+    else:
+        plain_text, tech_text = (text_b, text_a) if tech_a else (text_a, text_b)
+        if _broad_to_specialized_market_match(plain_text, tech_text):
+            technology_score = 0.70
+            technology_reason = "a broad market connects to its technology-specialized form"
+        else:
+            technology_score = 0.0
+            technology_reason = "the technology-specific report drops part of the market core"
+
+    combined = MARKET_WEIGHT * market_score + TECHNOLOGY_WEIGHT * technology_score
+    accepted = (
+        market_score >= MIN_MARKET_RELEVANCE
+        and technology_score >= MIN_TECHNOLOGY_RELEVANCE
+        and combined >= MIN_COMBINED_RELEVANCE
+    )
+    reason = (
+        f"market {market_score:.2f}; technology {technology_score:.2f}; "
+        f"{technology_reason}"
+    )
+    return MarketTechnologyRelevance(
+        market_score=round(market_score, 3),
+        technology_score=round(technology_score, 3),
+        combined_score=round(combined, 3),
+        accepted=accepted,
+        reason=reason,
+    )
 
 
 def has_compound_structure(text: str) -> bool:
