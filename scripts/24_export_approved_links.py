@@ -22,13 +22,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from agents.agent_11_editorial_review import build_review_note
+
 DB_PATH = "ken_links.db"
 
 COLUMNS = [
     "recommendation_id", "source_url", "target_url", "anchor_text",
     "placement_type", "placement_section", "suggested_sentence",
     "relationship_type", "link_score", "score_band", "approved_by",
-    "updated_at",
+    "recommendation_reason", "editorial_note", "updated_at",
 ]
 
 
@@ -36,10 +38,12 @@ def export_approved_links(db_path: str, out_path: Path) -> int:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        f"""SELECT {', '.join(COLUMNS)}
-           FROM link_recommendations
-           WHERE status = 'approved'
-           ORDER BY link_score DESC"""
+        """SELECT lr.*, s.title AS source_title, t.title AS target_title
+           FROM link_recommendations lr
+           JOIN content_nodes s ON s.node_id = lr.source_node_id
+           JOIN content_nodes t ON t.node_id = lr.target_node_id
+           WHERE lr.status = 'approved'
+           ORDER BY lr.link_score DESC"""
     ).fetchall()
     conn.close()
 
@@ -48,7 +52,16 @@ def export_approved_links(db_path: str, out_path: Path) -> int:
         writer = csv.writer(f)
         writer.writerow(COLUMNS)
         for row in rows:
-            writer.writerow([row[c] for c in COLUMNS])
+            rec = dict(row)
+            note = build_review_note(
+                rec, rec.get("source_title", ""), rec.get("target_title", ""))
+            values = []
+            for column in COLUMNS:
+                if column == "editorial_note":
+                    values.append(note.plain_summary)
+                else:
+                    values.append(rec.get(column, ""))
+            writer.writerow(values)
     return len(rows)
 
 

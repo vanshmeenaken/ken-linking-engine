@@ -22,8 +22,17 @@ def _scratch_db(tmp_path):
     return dst
 
 
+def _reset_recommendations(db_path):
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "UPDATE link_recommendations SET status='pending', approved_by=NULL")
+    conn.commit()
+    conn.close()
+
+
 def test_no_approved_recommendations_writes_header_only(tmp_path):
     db = _scratch_db(tmp_path)
+    _reset_recommendations(db)
     out = tmp_path / "export.csv"
     count = export_mod.export_approved_links(str(db), out)
     assert count == 0
@@ -32,6 +41,7 @@ def test_no_approved_recommendations_writes_header_only(tmp_path):
 
 def test_approved_recommendations_are_exported(tmp_path):
     db = _scratch_db(tmp_path)
+    _reset_recommendations(db)
     conn = sqlite3.connect(db)
     ids = [r[0] for r in conn.execute(
         "SELECT recommendation_id FROM link_recommendations LIMIT 2").fetchall()]
@@ -52,11 +62,14 @@ def test_approved_recommendations_are_exported(tmp_path):
     assert {r["recommendation_id"] for r in rows} == set(ids)
     for r in rows:
         assert r["source_url"] and r["target_url"] and r["anchor_text"]
+        assert r["recommendation_reason"]
+        assert r["editorial_note"]
         assert r["approved_by"] == "test"
 
 
 def test_rejected_and_pending_are_not_exported(tmp_path):
     db = _scratch_db(tmp_path)
+    _reset_recommendations(db)
     conn = sqlite3.connect(db)
     conn.execute(
         "UPDATE link_recommendations SET status='rejected' "
@@ -66,4 +79,4 @@ def test_rejected_and_pending_are_not_exported(tmp_path):
 
     out = tmp_path / "export.csv"
     count = export_mod.export_approved_links(str(db), out)
-    assert count == 0  # the rest are still pending, not approved
+    assert count == 0  # rejected and pending links are not approved for handover
