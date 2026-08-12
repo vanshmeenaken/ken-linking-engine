@@ -40,6 +40,12 @@ def test_clean_title_handles_plain_title():
     assert clean_title("Plain Market Report") == "Plain Market Report"
 
 
+def test_clean_title_removes_brand_prefix():
+    assert clean_title(
+        'Ken Research Uncovers UPSC Tier-2 EdTech Opportunities'
+    ) == 'Uncovers UPSC Tier-2 EdTech Opportunities'
+
+
 # ── the review note itself ───────────────────────────────────────────────────
 
 def test_review_note_has_all_prd_required_parts():

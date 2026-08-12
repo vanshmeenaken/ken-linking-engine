@@ -149,6 +149,16 @@ def test_list_recommendations_filter_by_band():
                for rec in r.json()["recommendations"])
 
 
+def test_list_recommendations_filter_by_relationship_class():
+    r = client.get("/api/recommendations?relationship_class=regional&limit=200")
+    assert r.status_code == 200
+    recommendations = r.json()["recommendations"]
+    assert recommendations
+    assert all(rec["relationship_class"] == "regional"
+               for rec in recommendations)
+    assert all("suggested_sentence" in rec for rec in recommendations)
+
+
 def test_page_recommendations_shape_and_404():
     conn = sqlite3.connect("ken_links.db")
     row = conn.execute(
@@ -159,3 +169,50 @@ def test_page_recommendations_shape_and_404():
         assert r.status_code == 200
         assert "links_to_add" in r.json()
     assert client.get("/api/pages/not-real/recommendations").status_code == 404
+
+
+def test_bidirectional_edges_generate_reciprocal_recommendations():
+    conn = sqlite3.connect('ken_links.db')
+    reciprocal = conn.execute(
+        '''SELECT COUNT(*) FROM link_recommendations a
+           WHERE a.status != 'rejected' AND EXISTS (
+               SELECT 1 FROM link_recommendations b
+               WHERE b.source_node_id=a.target_node_id
+                 AND b.target_node_id=a.source_node_id
+                 AND b.status != 'rejected'
+           )'''
+    ).fetchone()[0]
+    conn.close()
+    assert reciprocal > 0
+
+
+def test_report_plans_respect_prd_maximums():
+    conn = sqlite3.connect('ken_links.db')
+    reports = conn.execute(
+        'SELECT COUNT(*) FROM report_link_plans'
+    ).fetchone()[0]
+    bad = conn.execute(
+        '''SELECT COUNT(*) FROM report_link_plans
+           WHERE projected_outgoing_links > 25
+              OR total_opportunities > 30'''
+    ).fetchone()[0]
+    conn.close()
+    assert reports > 0
+    assert bad == 0
+
+
+def test_report_link_plan_api_shape():
+    stats = client.get('/api/report-link-plans/stats')
+    assert stats.status_code == 200
+    assert stats.json()['link_range'] == {'minimum': 10, 'maximum': 25}
+    response = client.get('/api/report-link-plans?limit=5')
+    assert response.status_code == 200
+    assert response.json()['plans']
+    plan = response.json()['plans'][0]
+    for field in (
+        'existing_outgoing_links', 'recommended_outgoing_links',
+        'incoming_opportunities', 'projected_outgoing_links',
+        'regional_report_opportunities', 'adjacent_report_opportunities',
+        'plan_status', 'opportunity_status', 'gap_reason',
+    ):
+        assert field in plan

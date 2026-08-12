@@ -1048,7 +1048,8 @@ def get_review_queue(limit: int = Query(50, ge=1, le=500)):
         """SELECT recommendation_id, source_url, target_url, relationship_type,
                   relationship_class, market_match_score, technology_match_score,
                   anchor_text, placement_type, placement_section,
-                  suggested_sentence, link_score, seo_score, business_score,
+                  suggested_sentence, placement_status, plan_category,
+                  source_plan_rank, link_score, seo_score, business_score,
                   score_band, risk_flag, recommendation_reason
            FROM link_recommendations
            WHERE status = 'pending' AND score_band != 'drop'
@@ -1084,6 +1085,96 @@ def get_recommendation_stats():
 
 # ── 33. List recommendations (paginated, filterable) ─────────────────────────
 
+@app.get('/api/report-link-plans/stats')
+def get_report_link_plan_stats():
+    '''Coverage against the PRD link and opportunity ranges.'''
+    conn = get_db()
+    total = conn.execute(
+        'SELECT COUNT(*) FROM report_link_plans'
+    ).fetchone()[0]
+    by_status = {
+        row[0]: row[1] for row in conn.execute(
+            'SELECT plan_status, COUNT(*) FROM report_link_plans '
+            'GROUP BY plan_status'
+        )
+    }
+    by_opportunity = {
+        row[0]: row[1] for row in conn.execute(
+            'SELECT opportunity_status, COUNT(*) FROM report_link_plans '
+            'GROUP BY opportunity_status'
+        )
+    }
+    totals = conn.execute(
+        '''SELECT COALESCE(SUM(recommended_outgoing_links), 0),
+                  COALESCE(SUM(incoming_opportunities), 0),
+                  COALESCE(SUM(remaining_gap), 0)
+           FROM report_link_plans'''
+    ).fetchone()
+    conn.close()
+    return {
+        'total_reports': total,
+        'by_plan_status': by_status,
+        'by_opportunity_status': by_opportunity,
+        'recommended_outgoing': totals[0],
+        'incoming_opportunities': totals[1],
+        'remaining_link_gap': totals[2],
+        'link_range': {'minimum': 10, 'maximum': 25},
+        'opportunity_range': {'minimum': 10, 'maximum': 30},
+    }
+
+
+@app.get('/api/report-link-plans')
+def list_report_link_plans(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    plan_status: Optional[str] = Query(None),
+    opportunity_status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+):
+    '''Return one balanced incoming/outgoing plan per active report.'''
+    conn = get_db()
+    where, params = [], []
+    if plan_status:
+        where.append('LOWER(p.plan_status)=LOWER(?)')
+        params.append(plan_status)
+    if opportunity_status:
+        where.append('LOWER(p.opportunity_status)=LOWER(?)')
+        params.append(opportunity_status)
+    if search:
+        where.append('(p.report_url LIKE ? OR n.title LIKE ?)')
+        params.extend([f'%{search}%', f'%{search}%'])
+    where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+    total = conn.execute(
+        f'''SELECT COUNT(*) FROM report_link_plans p
+            JOIN content_nodes n ON n.node_id=p.report_node_id {where_sql}''',
+        params,
+    ).fetchone()[0]
+    rows = conn.execute(
+        f'''SELECT p.*, n.title AS report_title
+            FROM report_link_plans p
+            JOIN content_nodes n ON n.node_id=p.report_node_id
+            {where_sql}
+            ORDER BY
+                CASE p.plan_status
+                    WHEN 'existing_over_limit' THEN 0
+                    WHEN 'planned_over_limit' THEN 1
+                    WHEN 'needs_more_relevant_links' THEN 2
+                    ELSE 3
+                END,
+                p.total_opportunities DESC, p.remaining_gap DESC,
+                p.report_url
+            LIMIT ? OFFSET ?''',
+        params + [limit, skip],
+    ).fetchall()
+    conn.close()
+    return {
+        'total': total,
+        'skip': skip,
+        'limit': limit,
+        'plans': [dict(row) for row in rows],
+    }
+
+
 @app.get("/api/recommendations")
 def list_recommendations(
     skip: int = Query(0, ge=0),
@@ -1110,7 +1201,9 @@ def list_recommendations(
     rows = conn.execute(
         f"""SELECT recommendation_id, source_url, target_url, relationship_type,
                    relationship_class, market_match_score, technology_match_score,
-                   anchor_text, placement_type, placement_section, link_score,
+                   anchor_text, placement_type, placement_section,
+                   suggested_sentence, placement_status, plan_category,
+                   source_plan_rank, link_score,
                    seo_score, business_score, ai_readiness_score, confidence_score,
                    score_band, risk_flag, risk_reason, recommendation_reason,
                    validation_status, status
@@ -1133,7 +1226,9 @@ def get_page_anchors(node_id: str):
     import json as _json
     conn = get_db()
     page = conn.execute(
-        "SELECT node_id, url, title FROM content_nodes WHERE node_id = ?",
+        """SELECT node_id, url, title, content_type,
+                  COALESCE(internal_links_out, 0) AS internal_links_out
+           FROM content_nodes WHERE node_id = ?""",
         (node_id,)).fetchone()
     if page is None:
         conn.close()
@@ -1201,6 +1296,8 @@ def decide_recommendation(recommendation_id: str, body: RecommendationDecision):
     conn.execute(
         f"UPDATE link_recommendations SET {', '.join(sets)} "
         "WHERE recommendation_id = ?", params)
+    from analysis.report_link_planner import refresh_report_link_plans
+    refresh_report_link_plans(conn, now)
     conn.commit()
     row = conn.execute(
         "SELECT recommendation_id, status, approved_by, anchor_text, updated_at "
@@ -1271,17 +1368,24 @@ def get_page_recommendations(node_id: str):
     outgoing = conn.execute(
         """SELECT target_url, anchor_text, link_score, score_band,
                   relationship_class, market_match_score, technology_match_score,
-                  placement_type, placement_section, suggested_sentence
+                  placement_type, placement_section, placement_status,
+                  plan_category, source_plan_rank, suggested_sentence, status
            FROM link_recommendations WHERE source_node_id = ?
            ORDER BY link_score DESC""", (node_id,)).fetchall()
     incoming = conn.execute(
         """SELECT source_url, anchor_text, link_score, score_band,
                   relationship_class, market_match_score, technology_match_score,
-                  placement_type, placement_section, suggested_sentence
+                  placement_type, placement_section, placement_status,
+                  plan_category, suggested_sentence, status
            FROM link_recommendations WHERE target_node_id = ?
            ORDER BY link_score DESC""", (node_id,)).fetchall()
+    link_plan = conn.execute(
+        "SELECT * FROM report_link_plans WHERE report_node_id = ?",
+        (node_id,),
+    ).fetchone()
     conn.close()
     return {**dict(page),
+            "link_plan": dict(link_plan) if link_plan else None,
             "links_to_add": [dict(r) for r in outgoing],
             "links_to_receive": [dict(r) for r in incoming]}
 

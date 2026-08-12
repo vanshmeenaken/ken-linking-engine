@@ -7,6 +7,7 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 
+from analysis.report_link_planner import refresh_report_link_plans
 from api.main import app
 
 client = TestClient(app)
@@ -57,9 +58,11 @@ def test_review_note_reflects_decision_status():
         assert r.json()["status"] == "rejected"
     finally:
         conn = sqlite3.connect("ken_links.db")
+        conn.row_factory = sqlite3.Row
         conn.execute(
             "UPDATE link_recommendations SET status=?, approved_by=?, "
             "risk_reason=?, updated_at=? WHERE recommendation_id = ?",
             (original[0], original[1], original[2], original[3], rec_id))
+        refresh_report_link_plans(conn, original[3] or 'test-restore')
         conn.commit()
         conn.close()

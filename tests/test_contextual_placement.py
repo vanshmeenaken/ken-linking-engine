@@ -172,14 +172,22 @@ def test_recommendations_have_placement_and_varied_anchors():
     # contextual ones carry the sentence they belong in
     ctx_no_sentence = conn.execute(
         "SELECT COUNT(*) FROM link_recommendations "
-        "WHERE placement_type='contextual_body' AND "
+        "WHERE placement_type='contextual_body' "
+        "AND placement_status='confirmed' AND "
         "(suggested_sentence IS NULL OR suggested_sentence='')").fetchone()[0]
+    invalid_status = conn.execute(
+        "SELECT COUNT(*) FROM link_recommendations "
+        "WHERE placement_status NOT IN ('planned','confirmed','unresolved') "
+        "OR placement_status IS NULL").fetchone()[0]
     # no target receives the same anchor from two sources
     dup_anchor = conn.execute(
-        "SELECT COUNT(*) FROM (SELECT target_node_id, anchor_text, COUNT(*) k "
-        "FROM link_recommendations GROUP BY target_node_id, anchor_text "
-        "HAVING k > 1)").fetchone()[0]
+        "SELECT COUNT(*) FROM (SELECT target_node_id, anchor_text, COUNT(*) k, "
+        "SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending_count "
+        "FROM link_recommendations WHERE status != 'rejected' "
+        "GROUP BY target_node_id, anchor_text "
+        "HAVING k > 1 AND pending_count > 0)").fetchone()[0]
     conn.close()
     assert missing == 0
     assert ctx_no_sentence == 0, "a contextual link has no sentence to place it in"
-    assert dup_anchor == 0, "a target still gets the same anchor from two sources"
+    assert invalid_status == 0
+    assert dup_anchor == 0, "a pending link repeats an active anchor for its target"

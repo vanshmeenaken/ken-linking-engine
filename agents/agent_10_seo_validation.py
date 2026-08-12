@@ -129,7 +129,8 @@ class SEOValidationAgent:
 
     def validate(self, source_node_id: str, target_node_id: str,
                 anchor_text: str, placement: str = "body_paragraph",
-                proposed_target_url: str | None = None) -> ValidationResult:
+                proposed_target_url: str | None = None,
+                additional_links: int = 1) -> ValidationResult:
         conn = self._connect()
         try:
             source = self._get_node(conn, source_node_id)
@@ -157,7 +158,7 @@ class SEOValidationAgent:
             self._check_faceted_url(target["url"], result)
             self._check_anchor_quality(anchor_text, result)
             self._check_placement(placement, result)
-            self._check_link_count(source, result)
+            self._check_link_count(source, result, additional_links)
             self._check_self_link(source, target, result)
 
             result.deferred_checks = [
@@ -280,16 +281,19 @@ class SEOValidationAgent:
             ))
 
     @staticmethod
-    def _check_link_count(source: sqlite3.Row, result: ValidationResult) -> None:
+    def _check_link_count(source: sqlite3.Row, result: ValidationResult,
+                          additional_links: int = 1) -> None:
         content_type = source["content_type"] or "report"
         low, high = LINK_COUNT_RANGES.get(content_type, (5, 999))
         current = source["internal_links_out"] or 0
-        if current + 1 > high:
+        projected = current + max(0, additional_links)
+        if projected > high:
             result.link_count_status = "FAIL"
             result.risk_flags.append(RiskFlag(
                 "link_count_exceeded",
-                f"Source page already has {current} outbound links; adding "
-                f"one more exceeds the {content_type} range ({low}-{high})",
+                f"Source page has {current} outbound links; the proposed "
+                f"plan adds {additional_links} and reaches {projected}, "
+                f"exceeding the {content_type} range ({low}-{high})",
                 "HIGH",
             ))
 

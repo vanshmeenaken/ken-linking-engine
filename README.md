@@ -201,20 +201,24 @@ Full request/response examples: **[docs/API.md](docs/API.md)**.
 
 ## Current Status
 
-Phase 1 and Phase 2 are complete. Phase 3 is active. The recommendation engine now gates report links on market relevance (65%) and technology relevance (35%), then classifies accepted links as regional, adjacent, or adjacent-regional.
+Phase 1 and Phase 2 are complete. Phase 3 is active. The recommendation engine now builds balanced, bidirectional report plans while retaining the market relevance (65%) and technology relevance (35%) safety gate.
 
 - 500 pages in the local inventory.
 - 447 entities and 2,021 page-to-entity mappings.
 - 108 relationship edges after the market/technology rebuild.
-- 88 link recommendations generated.
+- 135 active link recommendations (151 records including 16 retained rejections).
 - 26 recommendations approved for manual deployment.
 - 16 recommendations rejected during editorial review.
-- 46 recommendations pending editorial review.
+- 109 recommendations pending editorial review.
+- 55 reciprocal recommendation pairs now implement bidirectional relationships.
+- 298 active reports have PRD link-plan rows; 48 project into the 10-25 link range and 250 still need qualified candidates.
+- No report exceeds 25 projected outgoing links or 30 combined opportunities.
+- 19 pending contextual placements are explicitly unresolved because the live-page crawl is blocked; confirmed placements were not overwritten.
 - Every adjacent recommendation has market relevance >= 0.30 and technology relevance >= 0.50.
 - Web-team handover CSV: `reports/approved_links_handover_phase3.csv`.
 - Current Phase 3 handoff: `docs/05-PHASES/PHASE-3/01-HANDOFF.md`.
 
-Next PRD work: review the 46 pending recommendations, reviewer sanity-check of the approved CSV, manual implementation by the web team, broader catalog coverage, stronger GSC/GA4 prioritization, and later CMS deployment workflow.
+Next PRD work: review the 109 pending recommendations, add industry/country/region/service pages to the inventory so report plans can reach 10-30 opportunities, retry the 19 unresolved placements with live-site access, manually implement approved links, and later build the CMS deployment workflow.
 
 ## 📞 Support
 

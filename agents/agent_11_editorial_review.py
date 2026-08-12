@@ -28,10 +28,14 @@ from dataclasses import dataclass
 # ingestion). This is DISPLAY-ONLY cleanup for the review note; the stored
 # content_nodes.title is left untouched.
 _KEN_RESEARCH_SUFFIX_RE = re.compile(r"[\s:,|-]*ken research\s*$", re.IGNORECASE)
+_KEN_RESEARCH_PREFIX_RE = re.compile(
+    r"^ken research(?: *[-:|] *| +)", re.IGNORECASE
+)
 
 
 def clean_title(title: str) -> str:
     title = (title or "").strip()
+    title = _KEN_RESEARCH_PREFIX_RE.sub("", title)
     if "|" in title:
         title = title.split("|", 1)[0]
     else:
@@ -58,6 +62,10 @@ def _placement_sentence(rec: dict) -> str:
     if rec["placement_type"] == "contextual_body" and rec.get("suggested_sentence"):
         return (f'Inside the existing "{rec.get("placement_section", "body")}" '
                 f'text, in the sentence: "{rec["suggested_sentence"]}"')
+    if rec["placement_type"] == "section_block":
+        return (f'In the page\'s real "{rec.get("placement_section", "body")}" '
+                'section (no single sentence stood out, so add it as a natural '
+                'mention anywhere in that section)')
     if rec["placement_type"] == "related_reports_block":
         return ('In a "Related Reports" block at the end of the page '
                 '(no single sentence was a strong enough match to place it in the body)')

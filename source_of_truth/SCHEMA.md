@@ -61,6 +61,21 @@ http_status, crawl_depth, error, notes, crawled_at.
 - Columns populated: url, canonical_url, title, content_type, industry, country, global_or_local, status
 - Source: existing Ken Research catalog (report pages); other content types added later.
 
+## Phase 3 Planning Tables
+
+link_recommendations stores directional source-to-target instructions,
+relationship/relevance scores, anchor, placement status, plan category/rank,
+validation output, and editorial audit state. Reverse directions are separate
+rows.
+
+report_link_plans stores one PRD coverage summary per active report: existing
+and projected outgoing links, incoming/total opportunities, remaining
+gap/capacity, regional/adjacent/content/hub mix, status, and gap reason.
+
+anchor_banks stores safe anchor variants per target. Run
+python scripts/27_report_link_planning_migration.py after the Phase 3 migration
+to add the planning table and placement/plan fields.
+
 ## Verify
 ```
 python scripts/01_setup_db.py

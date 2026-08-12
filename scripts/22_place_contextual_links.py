@@ -11,10 +11,11 @@ recommendations:
      target genuinely belongs, and stores it as suggested_sentence with
      placement_type='contextual_body'. Paragraph text and vectors are persisted
      to paragraph_embeddings so a future run does not need to recrawl or
-     re-embed. Links with no genuine contextual home from EITHER method go to
+     re-embed. Successfully crawled links with no genuine contextual home go to
      placement_type='related_reports_block' (an end-of-page block, like Search
      Engine Journal's "Suggested Articles"), never forced into an unrelated
-     sentence.
+     sentence. A crawl failure leaves the planned placement untouched and marks
+     placement_status='unresolved' for a later retry.
 
   2. Anchor variation (PRD 18.4: no single exact-match anchor should dominate).
      When several pages link to the same target, their anchors are rotated
@@ -40,16 +41,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import uuid
 
+from agents.agent_9_section_purpose import classify_heading
 from agents.agent_10_seo_validation import SEOValidationAgent
 from analysis.contextual_placement import (best_placement, best_placement_semantic,
-                                          fetch_paragraphs, subject_text,
+                                          fetch_sections, subject_text,
                                           target_keywords)
 from analysis.vector_store import VectorStore
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "ken_links.db"
 
-PLACEMENT_SECTION = {  # a readable section label per relationship type
+PLACEMENT_SECTION = {  # fallback label when the matched paragraph has no heading
     "same_market": "Market Overview",
     "adjacent_market": "Related Markets",
     "country_region": "Regional Coverage",
@@ -57,6 +59,42 @@ PLACEMENT_SECTION = {  # a readable section label per relationship type
     "report_article_support": "Supporting Analysis",
     "case_study_support": "Case Study Evidence",
 }
+
+# When no single sentence matches, recommend the page's most fitting REAL
+# section for a manual mention (Agent 9 purposes, best first per relationship).
+SECTION_PREFS = {
+    "same_market": ("regional", "market_size", "overview"),
+    "global_local": ("regional", "overview", "market_size"),
+    "adjacent_market": ("industry_analysis", "overview", "segmentation"),
+    "country_region": ("regional", "overview"),
+    "report_article_support": ("industry_analysis", "overview"),
+    "case_study_support": ("competitive", "market_size", "industry_analysis"),
+}
+
+
+# Sections whose paragraphs must never HOST a contextual link, even when a
+# sentence there matches well: structural/meta content (found via manual
+# review - an author bio's "we support OEMs with data-driven analysis"
+# vector-matched a cement-market target, and an FAQ answer matched a laundry
+# target despite Agent 9's own FAQ-stays-link-free rule).
+EXCLUDED_PLACEMENT_PURPOSES = {
+    "toc", "methodology", "faq", "cta", "chapter_banner", "navigation",
+    "audience", "scope", "author",
+}
+
+
+def best_section_for(sections: list[dict], relationship_type: str) -> str | None:
+    """The heading of the page's best real section for this link, or None.
+
+    Only sections with actual prose (paragraphs) qualify - recommending an
+    empty section would be as dishonest as forcing a sentence.
+    """
+    prefs = SECTION_PREFS.get(relationship_type, ("overview",))
+    for wanted in prefs:
+        for sec in sections:
+            if sec["purpose"] == wanted and sec["n_paras"] > 0 and sec["heading"]:
+                return sec["heading"]
+    return None
 
 
 def anchor_options(bank: sqlite3.Row) -> list[str]:
@@ -77,43 +115,102 @@ def anchor_options(bank: sqlite3.Row) -> list[str]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--db", default=str(DB_PATH))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
+    db_path = Path(args.db)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
     recs = conn.execute(
         """SELECT r.recommendation_id, r.source_node_id, r.target_node_id,
-                  r.relationship_type, r.link_score,
+                  r.relationship_type, r.link_score, r.anchor_text,
+                  r.placement_type AS current_placement_type,
+                  r.placement_section AS current_placement_section,
+                  r.suggested_sentence AS current_suggested_sentence,
+                  r.validation_status AS current_validation_status,
+                  r.risk_flag AS current_risk_flag,
+                  r.risk_reason AS current_risk_reason,
                   s.url AS source_url,
                   t.market AS t_market, t.country AS t_country,
                   t.region AS t_region, t.title AS t_title
            FROM link_recommendations r
            JOIN content_nodes s ON s.node_id = r.source_node_id
            JOIN content_nodes t ON t.node_id = r.target_node_id
+           WHERE r.status='pending'
+             AND COALESCE(r.placement_status, 'planned') != 'confirmed'
            ORDER BY r.source_node_id, r.link_score DESC"""
     ).fetchall()
 
-    # ── crawl each distinct source page once ─────────────────────────────────
+    if not recs:
+        print("No unresolved/planned pending placements to process.")
+        conn.close()
+        return 0
+
+    # ── crawl each distinct source page once (with real section structure) ───
     source_urls = {r["source_node_id"]: r["source_url"] for r in recs}
     paragraphs: dict[str, list[str]] = {}
+    para_heading: dict[str, list[str | None]] = {}  # aligned with paragraphs
+    page_sections: dict[str, list[dict]] = {}
+    unresolved_sources: set[str] = set()
     print(f"Crawling {len(source_urls)} source pages for body text...")
+    placeable: dict[str, list[str]] = {}          # paragraphs links may live in
+    placeable_heading: dict[str, list[str | None]] = {}  # aligned headings
     for i, (nid, url) in enumerate(source_urls.items(), 1):
         try:
-            paragraphs[nid] = fetch_paragraphs(url)
+            sections = fetch_sections(url)
+            paragraphs[nid] = [p for s in sections for p in s["paragraphs"]]
+            para_heading[nid] = [s["heading"] for s in sections
+                                 for _ in s["paragraphs"]]
+            page_sections[nid] = [
+                {"heading": s["heading"], "purpose": classify_heading(s["heading"]),
+                 "n_paras": len(s["paragraphs"])} for s in sections]
+            # contextual links may only be placed in content sections - never
+            # in author bios, FAQs, TOCs, CTAs and similar structural areas
+            placeable[nid], placeable_heading[nid] = [], []
+            for s in sections:
+                if classify_heading(s["heading"]) in EXCLUDED_PLACEMENT_PURPOSES:
+                    continue
+                for p in s["paragraphs"]:
+                    placeable[nid].append(p)
+                    placeable_heading[nid].append(s["heading"])
+            if not paragraphs[nid]:
+                unresolved_sources.add(nid)
+                print(f"  [{i}] unresolved {url.split('/')[-1]}: no usable body text")
         except Exception as exc:
             paragraphs[nid] = []
+            para_heading[nid] = []
+            page_sections[nid] = []
+            placeable[nid] = []
+            placeable_heading[nid] = []
+            unresolved_sources.add(nid)
             print(f"  [{i}] skip {url.split('/')[-1]}: {exc}")
         time.sleep(0.3)  # be polite to the server
     print("  done.\n")
 
     # ── decide placement per recommendation: vector first, keyword fallback ──
     updates = []
-    contextual = related = 0
+    contextual = section_blocks = related = 0
     by_method = {"vector": 0, "keyword": 0}
     for r in recs:
-        page_paras = paragraphs.get(r["source_node_id"], [])
+        nid = r["source_node_id"]
+        if nid in unresolved_sources:
+            updates.append({
+                "id": r["recommendation_id"],
+                "source": nid,
+                "target": r["target_node_id"],
+                "score": r["link_score"],
+                "placement_type": r["current_placement_type"],
+                "placement_section": r["current_placement_section"],
+                "suggested_sentence": r["current_suggested_sentence"],
+                "placement_status": "unresolved",
+                "validation_status": r["current_validation_status"],
+                "risk_flag": r["current_risk_flag"],
+                "risk_reason": r["current_risk_reason"],
+            })
+            continue
+        page_paras = placeable.get(nid, [])
         query = subject_text(r["t_market"], r["t_title"])
         placed = best_placement_semantic(page_paras, query)
         method = "vector"
@@ -122,40 +219,77 @@ def main(argv=None) -> int:
             placed = best_placement(page_paras, kws)
             method = "keyword"
         if placed:
+            # tag the REAL section the matched paragraph sits under; the old
+            # static relationship-type label is only a fallback for headingless
+            # intro paragraphs
             ptype, sentence = "contextual_body", placed["sentence"]
+            headings = placeable_heading.get(nid, [])
+            idx = placed["paragraph_index"]
+            real = headings[idx] if idx < len(headings) else None
+            section = real or PLACEMENT_SECTION.get(
+                r["relationship_type"], "Market Overview")
             contextual += 1
             by_method[method] += 1
         else:
-            ptype, sentence = "related_reports_block", None
-            related += 1
-        section = ("Related Reports" if ptype == "related_reports_block"
-                   else PLACEMENT_SECTION.get(r["relationship_type"], "Market Overview"))
-        updates.append({"id": r["recommendation_id"], "source": r["source_node_id"],
+            # no genuine sentence: recommend the page's best REAL section for
+            # a manual mention before surrendering to the generic end block
+            sec_heading = best_section_for(
+                page_sections.get(nid, []), r["relationship_type"])
+            if sec_heading:
+                ptype, sentence, section = "section_block", None, sec_heading
+                section_blocks += 1
+            else:
+                ptype, sentence = "related_reports_block", None
+                real_related = next(
+                    (s["heading"] for s in page_sections.get(nid, [])
+                     if s["purpose"] == "related_reports" and s["heading"]),
+                    None)
+                section = real_related or "Related Reports"
+                related += 1
+        updates.append({"id": r["recommendation_id"], "source": nid,
                         "target": r["target_node_id"],
                         "score": r["link_score"], "placement_type": ptype,
                         "placement_section": section, "suggested_sentence": sentence})
+        updates[-1]["placement_status"] = "confirmed"
 
     # ── rotate anchors: vary anchors across inbound links to the same target ──
     by_target: dict[str, list[dict]] = {}
     for u in updates:
-        by_target.setdefault(u["target"], []).append(u)
+        if u["placement_status"] == "confirmed":
+            by_target.setdefault(u["target"], []).append(u)
     anchor_assigned = 0
+    batch_ids = {u["id"] for u in updates}
     for tid, group in by_target.items():
         bank = conn.execute(
             "SELECT * FROM anchor_banks WHERE target_node_id = ?", (tid,)).fetchone()
         options = anchor_options(bank)
         if not options:
             continue
-        # strongest inbound link gets the primary anchor, next gets a variation
+        # anchors already held by this target's OTHER active rows (approved,
+        # deployed, or pending rows outside this batch) are taken - reusing
+        # one would recreate the exact duplication this rotation exists to
+        # prevent (caught by test_recommendations_have_placement_and_varied_anchors)
+        taken = {
+            row["anchor_text"].lower()
+            for row in conn.execute(
+                """SELECT recommendation_id, anchor_text FROM link_recommendations
+                   WHERE target_node_id = ? AND status != 'rejected'
+                     AND COALESCE(anchor_text, '') != ''""", (tid,))
+            if row["recommendation_id"] not in batch_ids
+        }
+        free = [o for o in options if o.lower() not in taken] or options
+        # strongest inbound link gets the best free anchor, next a variation
         group.sort(key=lambda u: -u["score"])
         for idx, u in enumerate(group):
-            u["anchor_text"] = options[idx % len(options)]
+            u["anchor_text"] = free[idx % len(free)]
             anchor_assigned += 1
 
     print(f"Contextual placements (in body): {contextual}")
     print(f"  via vector search  : {by_method['vector']}")
     print(f"  via keyword fallback: {by_method['keyword']}")
+    print(f"Recommended real section (manual): {section_blocks}")
     print(f"Routed to Related Reports block : {related}")
+    print(f"Placement unresolved (crawl/body): {len(unresolved_sources)} source pages")
     print(f"Anchors rotated from bank       : {anchor_assigned}")
 
     # ── re-validate against the FINAL placement + anchor ─────────────────────
@@ -166,9 +300,11 @@ def main(argv=None) -> int:
     # against what will actually ship. Without this, an approved-looking
     # recommendation could carry a risk note describing a placement it no
     # longer has.
-    validator = SEOValidationAgent(DB_PATH)
+    validator = SEOValidationAgent(db_path)
     revalidated = {"approved_for_review": 0, "needs_revision": 0, "rejected": 0}
     for u in updates:
+        if u["placement_status"] == "unresolved":
+            continue
         v = validator.validate(
             u["source"], u["target"], u.get("anchor_text", ""), u["placement_type"])
         u["validation_status"] = v.overall_status
@@ -182,9 +318,15 @@ def main(argv=None) -> int:
     if args.dry_run:
         print("\nDRY RUN - nothing written. Samples:")
         for u in updates[:6]:
-            if u["placement_type"] == "contextual_body":
-                print(f'  [body] anchor "{u.get("anchor_text","?")}"')
+            if u["placement_status"] == "unresolved":
+                print(f'  [unresolved] source {u["source"]}')
+            elif u["placement_type"] == "contextual_body":
+                print(f'  [body] anchor "{u.get("anchor_text","?")}" '
+                      f'(section: {u["placement_section"]})')
                 print(f'         in: "{u["suggested_sentence"][:110]}..."')
+            elif u["placement_type"] == "section_block":
+                print(f'  [section] anchor "{u.get("anchor_text","?")}" '
+                      f'-> add in section "{u["placement_section"]}"')
             else:
                 print(f'  [related-block] anchor "{u.get("anchor_text","?")}"')
         conn.close()
@@ -195,10 +337,12 @@ def main(argv=None) -> int:
         conn.execute("BEGIN IMMEDIATE")
         for u in updates:
             sets = ["placement_type=?", "placement_section=?",
-                    "suggested_sentence=?", "validation_status=?",
+                    "suggested_sentence=?", "placement_status=?",
+                    "validation_status=?",
                     "risk_flag=?", "risk_reason=?", "updated_at=?"]
             params = [u["placement_type"], u["placement_section"],
-                      u["suggested_sentence"], u["validation_status"],
+                      u["suggested_sentence"], u["placement_status"],
+                      u["validation_status"],
                       u["risk_flag"], u["risk_reason"], now]
             if "anchor_text" in u:
                 sets.append("anchor_text=?"); params.append(u["anchor_text"])

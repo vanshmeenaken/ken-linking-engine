@@ -59,6 +59,20 @@ Broad-to-specialized links are supported when the technology-specific report ret
 
 Adjacent report links use `placement_type = related_reports_block` and still require editorial approval. The optional `--use-llm-judge` flag can send prefiltered titles to a configured external model for a final semantic check; it is disabled by default so report metadata is not disclosed externally without an explicit decision.
 
+## Bidirectional and Per-Report Planning
+
+An Agent 3 edge marked `bidirectional` now produces two independently scored candidates: A to B and B to A. Target business/search signals, source authority, anchor text, placement, and validation are recalculated for each direction.
+
+Agent 6 then de-duplicates source-target pairs, preserves prior approvals, excludes rejected pairs, and selects a diverse source plan. The strongest candidate stays first; available regional-report, adjacent-report, hub, supporting-content, and evidence categories are introduced before lower-ranked duplicates of one category.
+
+The planner enforces the PRD limits as a complete batch:
+
+- report page: maximum 25 projected outgoing links
+- report publication workflow: maximum 30 combined incoming/outgoing opportunities
+- minimum targets are reported as gaps, never filled with weak recommendations
+
+Every active report receives a row in `report_link_plans` containing existing links, proposed outgoing links, incoming opportunities, projected total, category mix, remaining gap/capacity, and status. The current 500-page sample contains reports, articles, and case studies only; missing hub/service content types are recorded in `gap_reason`.
+
 ## Anchor text
 
 A descriptive anchor is built from the target's country and market
@@ -71,12 +85,14 @@ cleaned title with a lower anchor-quality score. Generic anchors ("click here",
 
 Agent 7 builds diverse anchor banks per target, and
 `scripts/26_rotate_recommendation_anchors.py` rotates those variants across
-inbound recommendations without requiring a live-page crawl.
+pending inbound recommendations without requiring a live-page crawl. Approved
+anchors are treated as editorial decisions and are never rewritten.
 
 ## Validation gate
 
 Every proposed link is run through Agent 10 (SEO Validation) before it is
-recorded. A link Agent 10 rejects is still stored, but with `status = 'rejected'`
+recorded, then the selected source plan is validated again using the complete
+number of proposed additions. A link Agent 10 rejects is still stored, but with `status = 'rejected'`
 and the risk reason, never as pending. This makes Agent 10 the mandatory gate
 the master PRD requires (section 13.10).
 
@@ -87,6 +103,8 @@ the master PRD requires (section 13.10).
 - Recommendations are keyed unique on (source, target, relationship_type), so
   re-running updates rather than duplicates.
 - All writes happen in one transaction.
+- Contextual placements carry `planned`, `confirmed`, or `unresolved`.
+  A failed crawl preserves the planned placement and marks it unresolved.
 
 ## Commands
 
@@ -107,4 +125,6 @@ Through the API:
 - `GET /api/recommendations/review-queue` the editorial queue, highest score first
 - `GET /api/recommendations/stats` totals by band, status, validation
 - `GET /api/recommendations` filterable list
+- `GET /api/report-link-plans/stats` PRD coverage summary
+- `GET /api/report-link-plans` filterable per-report plans
 - `GET /api/pages/{node_id}/recommendations` links a page should add or receive

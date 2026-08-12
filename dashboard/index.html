@@ -125,6 +125,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 20px;
+    overflow-x: auto;
   }
   .table-panel h2 { font-size: 15px; margin: 0 0 16px; }
   .filters {
@@ -313,6 +314,36 @@
 
   <h2 class="section-heading">Link Recommendations</h2>
 
+  <div class="stat-grid" id="plan-grid">
+    <div class="loading">Loading report plansâ€¦</div>
+  </div>
+
+  <div class="table-panel" style="margin-bottom:24px;">
+    <h2>Report Link Plans</h2>
+    <div class="filters">
+      <input type="text" id="plan-search" placeholder="Search report..." />
+      <select id="plan-status-filter">
+        <option value="">All Link Plan Statuses</option>
+        <option value="needs_more_relevant_links">Below 10 Links</option>
+        <option value="link_range_met">Within 10-25 Links</option>
+        <option value="planned_over_limit">Planned Above 25</option>
+        <option value="existing_over_limit">Existing Above 25</option>
+      </select>
+      <select id="plan-opportunity-filter">
+        <option value="">All Opportunity Statuses</option>
+        <option value="needs_candidates">Below 10 Opportunities</option>
+        <option value="target_met">Within 10-30 Opportunities</option>
+        <option value="over_opportunity_limit">Above 30 Opportunities</option>
+      </select>
+      <select id="plan-page-size">
+        <option value="25">Show 25</option>
+        <option value="50" selected>Show 50</option>
+        <option value="100">Show 100</option>
+      </select>
+    </div>
+    <div id="plan-wrap"><div class="loading">Loadingâ€¦</div></div>
+  </div>
+
   <div class="stat-grid" id="rec-grid">
     <div class="loading">Loading recommendations…</div>
   </div>
@@ -325,6 +356,26 @@
       automatically — this is the list an editor approves or rejects. Highest
       score first.
     </p>
+    <div class="filters">
+      <select id="rec-status-filter">
+        <option value="">All Review Statuses</option>
+        <option value="pending">Pending Review</option>
+        <option value="approved">Approved</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      <select id="rec-class-filter">
+        <option value="">All Relationship Classes</option>
+        <option value="regional">Regional</option>
+        <option value="adjacent">Adjacent</option>
+        <option value="adjacent_regional">Adjacent + Regional</option>
+      </select>
+      <select id="rec-page-size">
+        <option value="25">Show 25</option>
+        <option value="50">Show 50</option>
+        <option value="100">Show 100</option>
+        <option value="500" selected>Show All</option>
+      </select>
+    </div>
     <div id="rec-wrap"><div class="loading">Loading…</div></div>
   </div>
 
@@ -707,17 +758,153 @@ async function loadFixFirst() {
   `;
 }
 
+const PLAN_LABELS = {
+  needs_more_relevant_links: "Needs qualified links",
+  link_range_met: "10-25 range met",
+  planned_over_limit: "Plan above 25",
+  existing_over_limit: "Existing links above 25",
+};
+
+async function loadReportPlans() {
+  const query = new URLSearchParams({
+    limit: document.getElementById("plan-page-size").value,
+  });
+  const status = document.getElementById("plan-status-filter").value;
+  const opportunity = document.getElementById("plan-opportunity-filter").value;
+  const search = document.getElementById("plan-search").value.trim();
+  if (status) query.set("plan_status", status);
+  if (opportunity) query.set("opportunity_status", opportunity);
+  if (search) query.set("search", search);
+
+  const [stats, data] = await Promise.all([
+    getJSON(`${API}/api/report-link-plans/stats`),
+    getJSON(`${API}/api/report-link-plans?${query}`),
+  ]);
+  const planStatus = stats.by_plan_status || {};
+  const opportunityStatus = stats.by_opportunity_status || {};
+  document.getElementById("plan-grid").innerHTML = `
+    <div class="stat-card">
+      <div class="label">Active Reports Planned</div>
+      <div class="value">${fmt(stats.total_reports)}</div>
+      <div class="sub">target: 10-25 links per report</div>
+    </div>
+    <div class="stat-card orphan">
+      <div class="label">Below 10 Links</div>
+      <div class="value">${fmt(planStatus.needs_more_relevant_links || 0)}</div>
+      <div class="sub">${fmt(stats.remaining_link_gap)} qualified links still needed</div>
+    </div>
+    <div class="stat-card good">
+      <div class="label">Within Link Range</div>
+      <div class="value">${fmt(planStatus.link_range_met || 0)}</div>
+      <div class="sub">projected total is 10-25</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">10-30 Opportunities Met</div>
+      <div class="value">${fmt(opportunityStatus.target_met || 0)}</div>
+      <div class="sub">incoming and outgoing combined</div>
+    </div>`;
+
+  const wrap = document.getElementById("plan-wrap");
+  if (!data.total) {
+    wrap.innerHTML = '<div class="empty-msg">No report plans match these filters.</div>';
+    return;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Report</th><th>Existing</th><th>Proposed Out</th>
+        <th>Projected</th><th>Incoming</th><th>Opportunities</th>
+        <th>Mix</th><th>Plan Status</th>
+      </tr></thead>
+      <tbody>${data.plans.map(p => {
+        const inRange = p.projected_outgoing_links >= 10
+          && p.projected_outgoing_links <= 25;
+        const badge = inRange ? "normal" : "under_linked";
+        const title = p.report_title || p.report_url.split("/").pop();
+        const id = p.report_node_id;
+        return `<tr>
+          <td><div class="page-title"><a href="${p.report_url}" target="_blank"
+            rel="noopener">${title}</a></div></td>
+          <td>${p.existing_outgoing_links}</td>
+          <td>
+            <strong>${p.recommended_outgoing_links}</strong>
+            <div class="panel-note">${p.approved_outgoing_links} approved /
+              ${p.pending_outgoing_links} pending</div>
+            <button class="small-btn review" style="margin-top:6px;"
+              onclick="togglePlanLinks('${id}')" id="plan-links-btn-${id}">Show all links ▾</button>
+            <div id="plan-links-${id}" style="display:none; margin-top:8px;"></div>
+          </td>
+          <td><span class="badge ${badge}">${p.projected_outgoing_links} / 10-25</span></td>
+          <td>${p.incoming_opportunities}</td>
+          <td>${p.total_opportunities} / 10-30</td>
+          <td><div>Regional ${p.regional_report_opportunities}</div>
+            <div>Adjacent ${p.adjacent_report_opportunities}</div>
+            <div>Content ${p.supporting_content_opportunities} / Hubs ${p.hub_opportunities}</div></td>
+          <td><strong>${PLAN_LABELS[p.plan_status] || p.plan_status}</strong>
+            ${p.gap_reason ? `<div class="panel-note">${p.gap_reason}</div>` : ""}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>
+    <p class="panel-note">Showing ${data.plans.length} of ${data.total} reports.</p>`;
+}
+
+async function togglePlanLinks(nodeId) {
+  const cell = document.getElementById(`plan-links-${nodeId}`);
+  const btn = document.getElementById(`plan-links-btn-${nodeId}`);
+  if (cell.style.display !== "none") {
+    cell.style.display = "none";
+    btn.textContent = "Show all links ▾";
+    return;
+  }
+  cell.style.display = "";
+  btn.textContent = "Hide links ▴";
+  cell.innerHTML = "Loading…";
+  try {
+    const data = await getJSON(`${API}/api/pages/${nodeId}/recommendations`);
+    const linkRow = (url, anchor, score, band, status) => `
+      <div style="padding:4px 0; border-bottom:1px solid #eee; font-size:12px;">
+        <span class="badge ${REC_BAND[band] || "low"}">${score} ${band}</span>
+        <strong style="margin-left:6px;">${anchor}</strong>
+        &nbsp;→&nbsp; <a href="${url}" target="_blank" rel="noopener">${url.split("/").pop()}</a>
+        &nbsp; <span class="panel-note" style="display:inline;">(${status})</span>
+      </div>`;
+    const outgoing = data.links_to_add.map(r =>
+      linkRow(r.target_url, r.anchor_text, r.link_score, r.score_band, r.status)).join("")
+      || `<div class="panel-note">None proposed.</div>`;
+    const incoming = data.links_to_receive.map(r =>
+      linkRow(r.source_url, r.anchor_text, r.link_score, r.score_band, r.status)).join("")
+      || `<div class="panel-note">None proposed.</div>`;
+    cell.innerHTML = `
+      <div class="review-note" style="text-align:left;">
+        <div><strong>Outgoing (this report → others), ${data.links_to_add.length}:</strong></div>
+        ${outgoing}
+        <div style="margin-top:10px;"><strong>Incoming (others → this report), ${data.links_to_receive.length}:</strong></div>
+        ${incoming}
+      </div>`;
+  } catch (e) {
+    cell.innerHTML = `<span style="color:var(--red)">Could not load links: ${e.message}</span>`;
+  }
+}
+
 const REC_BAND = {
   priority: "high", strong: "high", secondary: "medium", hold: "low",
 };
 
 async function loadRecommendations() {
+  const status = document.getElementById("rec-status-filter").value;
+  const relationshipClass = document.getElementById("rec-class-filter").value;
+  const limit = document.getElementById("rec-page-size").value;
+  const query = new URLSearchParams({ limit });
+  if (status) query.set("status", status);
+  if (relationshipClass) query.set("relationship_class", relationshipClass);
+
   const [stats, queue] = await Promise.all([
     getJSON(`${API}/api/recommendations/stats`),
-    getJSON(`${API}/api/recommendations/review-queue?limit=25`),
+    getJSON(`${API}/api/recommendations?${query}`),
   ]);
 
   const bands = stats.by_band || {};
+  const classes = stats.by_relationship_class || {};
   document.getElementById("rec-grid").innerHTML = `
     <div class="stat-card good">
       <div class="label">Recommendations</div>
@@ -739,12 +926,26 @@ async function loadRecommendations() {
       <div class="value">${fmt((stats.by_status || {}).pending || 0)}</div>
       <div class="sub">pending an editor</div>
     </div>
+    <div class="stat-card">
+      <div class="label">Regional</div>
+      <div class="value">${fmt(classes.regional || 0)}</div>
+      <div class="sub">same market, different geography</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Adjacent</div>
+      <div class="value">${fmt(classes.adjacent || 0)}</div>
+      <div class="sub">related market or technology</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Adjacent + Regional</div>
+      <div class="value">${fmt(classes.adjacent_regional || 0)}</div>
+      <div class="sub">related subject and different geography</div>
+    </div>
   `;
 
   const wrap = document.getElementById("rec-wrap");
-  if (!queue.count) {
-    wrap.innerHTML = `<div class="empty-msg">No recommendations in the queue. `
-      + `Run agents/agent_6_link_recommendation.py.</div>`;
+  if (!queue.total) {
+    wrap.innerHTML = `<div class="empty-msg">No recommendations match these filters.</div>`;
     return;
   }
   const escapeHtml = (s) => (s || "").replace(/[&<>"']/g, c => (
@@ -754,16 +955,28 @@ async function loadRecommendations() {
     <table>
       <thead>
         <tr><th>From Page</th><th>Should Link To</th><th>Anchor Text</th>
-            <th>Relationship</th><th>Where It Goes</th><th>Score</th><th>Review</th></tr>
+            <th>Relationship</th><th>Where It Goes</th><th>Score</th><th>Status</th><th>Review</th></tr>
       </thead>
       <tbody>
         ${queue.recommendations.map(r => {
           const isContextual = r.placement_type === "contextual_body";
           const whereLabel = (r.placement_section || r.placement_type || "").replace(/_/g, " ");
-          const whereCell = isContextual && r.suggested_sentence
+          const placementPending = ["planned", "unresolved"].includes(r.placement_status);
+          const whereCell = placementPending
+            ? `<div><strong>${whereLabel}</strong></div>
+               <div class="panel-note" style="margin-top:4px;">
+                 Placement awaiting source-page verification.
+               </div>`
+            : isContextual && r.suggested_sentence
             ? `<div><strong>${whereLabel}</strong></div>
                <div class="panel-note" style="margin-top:4px; font-style:italic;">
                  "...${escapeHtml(r.suggested_sentence)}..."
+               </div>`
+            : r.placement_type === "section_block"
+            ? `<div><strong>${whereLabel}</strong></div>
+               <div class="panel-note" style="margin-top:4px;">
+                 Add as a natural mention inside this real section of the page —
+                 no single sentence stood out.
                </div>`
             : `<div><strong>${whereLabel}</strong></div>
                <div class="panel-note" style="margin-top:4px;">
@@ -781,15 +994,16 @@ async function loadRecommendations() {
             <td><strong>${relationshipLabel}</strong><div class="panel-note">Market ${marketPct}% / Technology ${technologyPct}%</div></td>
             <td style="max-width:340px;">${whereCell}</td>
             <td><span class="badge ${REC_BAND[r.score_band] || "low"}">${r.link_score} ${r.score_band}</span></td>
+            <td><span class="badge ${r.status === "approved" ? "normal" : r.status === "rejected" ? "orphan" : "medium"}">${r.status}</span></td>
             <td><button class="small-btn review" onclick="toggleReviewNote('${id}')">Explain</button></td>
           </tr>
           <tr id="review-row-${id}" style="display:none;">
-            <td colspan="7"><div id="review-note-${id}" class="review-note"></div></td>
+            <td colspan="8"><div id="review-note-${id}" class="review-note"></div></td>
           </tr>`;
         }).join("")}
       </tbody>
     </table>
-    <p class="panel-note">Showing ${queue.recommendations.length} of ${stats.total}. `
+    <p class="panel-note">Showing ${queue.recommendations.length} of ${queue.total} matching recommendations (${stats.total} overall). `
       + `Italic text is the exact sentence the link belongs in on the source page. `
       + `Click "Explain" to see why a link is suggested in plain English, then approve or reject it. `
       + `Nothing is applied to the live site automatically.</p>
@@ -888,6 +1102,17 @@ async function loadRelTypeFilter() {
 
 document.getElementById("rel-type-filter").addEventListener("change", loadRelationships);
 document.getElementById("rel-page-size").addEventListener("change", loadRelationships);
+document.getElementById("rec-status-filter").addEventListener("change", loadRecommendations);
+document.getElementById("rec-class-filter").addEventListener("change", loadRecommendations);
+document.getElementById("rec-page-size").addEventListener("change", loadRecommendations);
+document.getElementById("plan-status-filter").addEventListener("change", loadReportPlans);
+document.getElementById("plan-opportunity-filter").addEventListener("change", loadReportPlans);
+document.getElementById("plan-page-size").addEventListener("change", loadReportPlans);
+let planSearchTimer;
+document.getElementById("plan-search").addEventListener("input", () => {
+  clearTimeout(planSearchTimer);
+  planSearchTimer = setTimeout(loadReportPlans, 250);
+});
 
 async function loadIntegrations() {
   const s = await getJSON(`${API}/api/integrations/status`);
@@ -917,6 +1142,7 @@ async function loadEverything() {
     loadIntelligence(),
     loadIntegrations(),
     loadFixFirst(),
+    loadReportPlans(),
     loadRecommendations(),
     loadRelationships(),
   ]);

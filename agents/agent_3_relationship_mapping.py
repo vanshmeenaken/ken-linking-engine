@@ -82,7 +82,8 @@ MAX_SAME_MARKET_PAGES_PER_ENTITY = 12  # precision guard: skip hub-like markets
 # report pairs use the separate market/technology gate in
 # analysis/subject_similarity.py; geography is only classified afterwards.
 COUNTRY_REGION_SIMILARITY_THRESHOLD = 0.25
-MAX_ADJACENT_PER_PAGE = 5
+# Candidate breadth only; Agent 6 still applies score, diversity, and page caps.
+MAX_ADJACENT_PER_PAGE = 10
 
 
 @dataclass

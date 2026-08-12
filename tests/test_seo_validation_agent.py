@@ -135,6 +135,23 @@ def test_link_count_exceeded_flagged(tmp_path):
     assert r.overall_status == "needs_revision"  # HIGH severity — not silently approved
 
 
+def test_complete_plan_count_is_validated_not_only_one_link(tmp_path):
+    agent = _agent(tmp_path, [
+        {'node_id': 's', 'url': 'https://x/s', 'content_type': 'report',
+         'internal_links_out': 20},
+        {'node_id': 't', 'url': 'https://x/t'},
+    ])
+    one = agent.validate(
+        's', 't', 'Good Market Report', additional_links=1
+    )
+    plan = agent.validate(
+        's', 't', 'Good Market Report', additional_links=6
+    )
+    assert one.link_count_status == 'PASS'
+    assert plan.link_count_status == 'FAIL'
+    assert any(flag.rule == 'link_count_exceeded' for flag in plan.risk_flags)
+
+
 def test_self_link_rejected(tmp_path):
     agent = _agent(tmp_path, [{"node_id": "s", "url": "https://x/s"}])
     r = agent.validate("s", "s", "Good Market Report")

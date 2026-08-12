@@ -57,6 +57,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.agent_10_seo_validation import SEOValidationAgent
 from analysis.anchor_text import build_primary_anchor
+from analysis.report_link_planner import (
+    recommendation_category,
+    refresh_report_link_plans,
+    select_balanced_recommendations,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "ken_links.db"
@@ -107,6 +112,8 @@ class Recommendation:
     source_url: str
     target_url: str
     target_canonical_url: str
+    source_content_type: str
+    target_content_type: str
     relationship_type: str
     relationship_class: str
     market_match_score: float
@@ -114,6 +121,9 @@ class Recommendation:
     anchor_text: str
     placement_type: str
     placement_section: str
+    placement_status: str
+    plan_category: str
+    source_plan_rank: int
     link_score: float
     seo_score: float
     business_score: float
@@ -200,7 +210,20 @@ class LinkRecommendationAgent:
         conn = self._connect()
         try:
             sig = self._load_signals(conn)
-            q = """SELECT e.*,
+            q = """WITH oriented_edges AS (
+                       SELECT e.*, e.source_node_id AS candidate_source_node_id,
+                              e.target_node_id AS candidate_target_node_id
+                       FROM relationship_edges e
+                       WHERE e.status='pending' AND e.source_node_id != e.target_node_id
+                       UNION ALL
+                       SELECT e.*, e.target_node_id AS candidate_source_node_id,
+                              e.source_node_id AS candidate_target_node_id
+                       FROM relationship_edges e
+                       WHERE e.status='pending'
+                         AND e.relationship_direction='bidirectional'
+                         AND e.source_node_id != e.target_node_id
+                   )
+                   SELECT e.*,
                           s.url AS s_url, s.page_authority_score AS s_auth,
                           s.content_type AS s_type,
                           t.url AS t_url, t.canonical_url AS t_canon, t.title AS t_title,
@@ -208,10 +231,9 @@ class LinkRecommendationAgent:
                           t.market AS t_market, t.country AS t_country,
                           t.business_priority AS t_bp, t.ai_readiness_score AS t_ai,
                           t.search_opportunity_score AS t_so
-                   FROM relationship_edges e
-                   JOIN content_nodes s ON s.node_id = e.source_node_id
-                   JOIN content_nodes t ON t.node_id = e.target_node_id
-                   WHERE e.status = 'pending' AND e.source_node_id != e.target_node_id
+                   FROM oriented_edges e
+                   JOIN content_nodes s ON s.node_id = e.candidate_source_node_id
+                   JOIN content_nodes t ON t.node_id = e.candidate_target_node_id
                    ORDER BY e.confidence_score DESC"""
             if limit:
                 q += f" LIMIT {int(limit)}"
@@ -221,10 +243,11 @@ class LinkRecommendationAgent:
             for e in edges:
                 target = conn.execute(
                     "SELECT * FROM content_nodes WHERE node_id = ?",
-                    (e["target_node_id"],)).fetchone()
+                    (e["candidate_target_node_id"],)).fetchone()
                 anchor, anchor_q = self._build_anchor(target)
 
-                tid = e["target_node_id"]
+                source_id = e["candidate_source_node_id"]
+                tid = e["candidate_target_node_id"]
                 f = {
                     "semantic_similarity": e["semantic_similarity_score"] or 0.0,
                     "entity_overlap": e["entity_overlap_score"] or 0.0,
@@ -256,23 +279,32 @@ class LinkRecommendationAgent:
 
                 # mandatory validation gate (Agent 10)
                 v = self.validator.validate(
-                    e["source_node_id"], e["target_node_id"], anchor, placement_type)
-                blockers = [rf for rf in v.risk_flags if rf.severity == "BLOCKER"]
+                    source_id, tid, anchor, placement_type)
                 risk_flag = "high" if v.overall_status == "rejected" else (
                     "medium" if v.overall_status == "needs_revision" else "low")
                 risk_reason = "; ".join(f"{rf.rule}: {rf.description}"
                                         for rf in v.risk_flags) or None
 
                 recs.append(Recommendation(
-                    source_node_id=e["source_node_id"], target_node_id=tid,
+                    source_node_id=source_id, target_node_id=tid,
                     source_url=e["s_url"], target_url=e["t_url"],
                     target_canonical_url=e["t_canon"] or e["t_url"],
+                    source_content_type=e["s_type"],
+                    target_content_type=e["t_type"],
                     relationship_type=e["relationship_type"],
                     relationship_class=e["relationship_class"] or e["relationship_type"],
                     market_match_score=round(e["market_match_score"] or 0.0, 3),
                     technology_match_score=round(e["technology_match_score"] or 0.0, 3),
                     anchor_text=anchor,
                     placement_type=placement_type, placement_section=placement_section,
+                    placement_status=(
+                        "confirmed" if placement_type != "contextual_body"
+                        else "planned"
+                    ),
+                    plan_category=recommendation_category(
+                        e["relationship_type"], e["s_type"], e["t_type"]
+                    ),
+                    source_plan_rank=0,
                     link_score=round(score, 1), seo_score=round(seo, 1),
                     business_score=round(f["business_value"] * 100, 1),
                     ai_readiness_score=round(f["ai_readiness"] * 100, 1),
@@ -283,16 +315,109 @@ class LinkRecommendationAgent:
                     factors={k: round(val, 3) for k, val in f.items()},
                 ))
 
-            # De-duplicate: two pages can share more than one relationship type
-            # (e.g. same_market AND global_local), which would otherwise emit the
-            # same source->target link twice. Keep one per (source, target) pair,
-            # the highest-scoring, so a link is never recommended twice.
+            reviewed_rows = conn.execute(
+                """SELECT source_node_id, target_node_id, relationship_type, status
+                   FROM link_recommendations
+                   WHERE status IN ('approved', 'rejected')"""
+            ).fetchall()
+            review_status = {
+                (row["source_node_id"], row["target_node_id"],
+                 row["relationship_type"]): row["status"]
+                for row in reviewed_rows
+            }
+            approved_pairs = {
+                (row["source_node_id"], row["target_node_id"])
+                for row in reviewed_rows if row["status"] == "approved"
+            }
+            rejected_pairs = {
+                (row["source_node_id"], row["target_node_id"])
+                for row in reviewed_rows if row["status"] == "rejected"
+            } - approved_pairs
+
+            # De-duplicate overlapping relationship types. A prior human
+            # approval wins over a newly higher machine score; rejected pairs
+            # stay out of the active plan.
             best: dict[tuple[str, str], Recommendation] = {}
             for r in recs:
                 key = (r.source_node_id, r.target_node_id)
-                if key not in best or r.link_score > best[key].link_score:
+                if key in rejected_pairs:
+                    continue
+                existing = best.get(key)
+                status = review_status.get(
+                    (r.source_node_id, r.target_node_id, r.relationship_type)
+                )
+                if key in approved_pairs and status != 'approved':
+                    continue
+                existing_status = (
+                    review_status.get((
+                        existing.source_node_id, existing.target_node_id,
+                        existing.relationship_type,
+                    ))
+                    if existing else None
+                )
+                if (
+                    existing is None
+                    or (status == "approved" and existing_status != "approved")
+                    or (
+                        status == existing_status
+                        and r.link_score > existing.link_score
+                    )
+                ):
                     best[key] = r
-            return sorted(best.values(), key=lambda r: -r.link_score)
+
+            page_facts = {
+                row["node_id"]: dict(row)
+                for row in conn.execute(
+                    """SELECT node_id, content_type,
+                              COALESCE(internal_links_out, 0) AS internal_links_out
+                       FROM content_nodes"""
+                )
+            }
+            selected_pairs = set(best)
+            reserved_by_source: dict[str, int] = {}
+            reserved_touch: dict[str, int] = {}
+            for row in reviewed_rows:
+                pair = (row["source_node_id"], row["target_node_id"])
+                if row["status"] != "approved" or pair in selected_pairs:
+                    continue
+                source_id, target_id = pair
+                reserved_by_source[source_id] = (
+                    reserved_by_source.get(source_id, 0) + 1
+                )
+                for node_id in (source_id, target_id):
+                    if page_facts[node_id]["content_type"] == "report":
+                        reserved_touch[node_id] = reserved_touch.get(node_id, 0) + 1
+
+            selected = select_balanced_recommendations(
+                list(best.values()), page_facts, approved_pairs,
+                reserved_by_source, reserved_touch,
+            )
+            additions_by_source: dict[str, int] = {}
+            for recommendation in selected:
+                additions_by_source[recommendation.source_node_id] = (
+                    additions_by_source.get(recommendation.source_node_id, 0) + 1
+                )
+            for recommendation in selected:
+                validation = self.validator.validate(
+                    recommendation.source_node_id,
+                    recommendation.target_node_id,
+                    recommendation.anchor_text,
+                    recommendation.placement_type,
+                    additional_links=additions_by_source[
+                        recommendation.source_node_id
+                    ],
+                )
+                recommendation.validation_status = validation.overall_status
+                recommendation.risk_flag = (
+                    "high" if validation.overall_status == "rejected"
+                    else "medium" if validation.overall_status == "needs_revision"
+                    else "low"
+                )
+                recommendation.risk_reason = "; ".join(
+                    f"{flag.rule}: {flag.description}"
+                    for flag in validation.risk_flags
+                ) or None
+            return selected
         finally:
             conn.close()
 
@@ -307,10 +432,9 @@ class LinkRecommendationAgent:
                 f"{e['confidence_score']:.2f}); link with anchor '{anchor}' [{b}].")
 
     def write(self, recs: list[Recommendation]) -> int:
-        if not recs:
-            return 0
         now = datetime.now(timezone.utc).isoformat()
         conn = sqlite3.connect(self.db_path, timeout=30)
+        conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("BEGIN IMMEDIATE")
@@ -324,14 +448,18 @@ class LinkRecommendationAgent:
                         relationship_type, relationship_class,
                         market_match_score, technology_match_score,
                         anchor_text, placement_type, placement_section,
+                        placement_status, plan_category, source_plan_rank,
                         link_score, seo_score, business_score,
                         ai_readiness_score, confidence_score, score_band,
                         risk_flag, risk_reason, recommendation_reason,
                         validation_status, status, created_by, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'agent_6',?,?)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'agent_6',?,?)
                        ON CONFLICT (source_node_id, target_node_id, relationship_type)
                        DO UPDATE SET
-                           anchor_text=excluded.anchor_text,
+                           anchor_text=CASE
+                               WHEN link_recommendations.status IN ('approved','deployed')
+                               THEN link_recommendations.anchor_text
+                               ELSE excluded.anchor_text END,
                            link_score=excluded.link_score,
                            seo_score=excluded.seo_score,
                            business_score=excluded.business_score,
@@ -342,6 +470,23 @@ class LinkRecommendationAgent:
                            relationship_class=excluded.relationship_class,
                            market_match_score=excluded.market_match_score,
                            technology_match_score=excluded.technology_match_score,
+                           placement_type=CASE
+                               WHEN link_recommendations.placement_status
+                                    IN ('confirmed','unresolved')
+                               THEN link_recommendations.placement_type
+                               ELSE excluded.placement_type END,
+                           placement_section=CASE
+                               WHEN link_recommendations.placement_status
+                                    IN ('confirmed','unresolved')
+                               THEN link_recommendations.placement_section
+                               ELSE excluded.placement_section END,
+                           placement_status=CASE
+                               WHEN link_recommendations.placement_status
+                                    IN ('confirmed','unresolved')
+                               THEN link_recommendations.placement_status
+                               ELSE excluded.placement_status END,
+                           plan_category=excluded.plan_category,
+                           source_plan_rank=excluded.source_plan_rank,
                            recommendation_reason=excluded.recommendation_reason,
                            updated_at=excluded.updated_at""",
                     (str(uuid.uuid4()), r.source_node_id, r.target_node_id,
@@ -349,6 +494,7 @@ class LinkRecommendationAgent:
                      r.relationship_type, r.relationship_class,
                      r.market_match_score, r.technology_match_score,
                      r.anchor_text, r.placement_type, r.placement_section,
+                     r.placement_status, r.plan_category, r.source_plan_rank,
                      r.link_score, r.seo_score, r.business_score,
                      r.ai_readiness_score, r.confidence_score, r.score_band,
                      r.risk_flag, r.risk_reason, r.recommendation_reason,
@@ -375,6 +521,7 @@ class LinkRecommendationAgent:
                     "DELETE FROM link_recommendations WHERE recommendation_id=?",
                     (recommendation_id,),
                 )
+            refresh_report_link_plans(conn, now)
             conn.commit()
         except Exception:
             conn.rollback()

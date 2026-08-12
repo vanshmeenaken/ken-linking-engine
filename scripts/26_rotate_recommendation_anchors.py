@@ -32,8 +32,16 @@ def rotate(db_path: Path, dry_run: bool = False) -> int:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT recommendation_id,target_node_id,link_score FROM link_recommendations "
+        "WHERE status='pending' "
         "ORDER BY target_node_id,link_score DESC"
     ).fetchall()
+    used_by_target = defaultdict(set)
+    for row in conn.execute(
+        """SELECT target_node_id, anchor_text FROM link_recommendations
+           WHERE status IN ('approved', 'deployed')
+             AND COALESCE(anchor_text, '') != ''"""
+    ):
+        used_by_target[row["target_node_id"]].add(row["anchor_text"].lower())
     grouped = defaultdict(list)
     for row in rows:
         grouped[row["target_node_id"]].append(row)
@@ -43,6 +51,12 @@ def rotate(db_path: Path, dry_run: bool = False) -> int:
             "SELECT * FROM anchor_banks WHERE target_node_id=?", (target_id,),
         ).fetchone()
         choices = options(bank)
+        unused = [
+            choice for choice in choices
+            if choice.lower() not in used_by_target[target_id]
+        ]
+        if unused:
+            choices = unused
         if not choices:
             continue
         for index, recommendation in enumerate(recommendations):

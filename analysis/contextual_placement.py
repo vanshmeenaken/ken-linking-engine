@@ -86,17 +86,65 @@ def _clean(text: str) -> str:
     return text.strip()
 
 
-def fetch_paragraphs(url: str, timeout: int = 20) -> list[str]:
-    """Return the meaningful body paragraphs of a page (chrome stripped)."""
+def _is_internal_href(href: str) -> bool:
+    href = (href or "").strip().lower()
+    if href.startswith(("#", "mailto:", "tel:", "javascript:")):
+        return False
+    return "kenresearch.com" in href or href.startswith("/")
+
+
+def fetch_sections(url: str, timeout: int = 20) -> list[dict]:
+    """Return the page's real section structure, in document order.
+
+    Each section: {"heading": str | None, "order": int, "paragraphs": [str],
+    "internal_link_count": int}. A section starts at each <h2> (<h3> when a
+    page has no <h2> at all); paragraphs before the first heading form a
+    heading-less intro section. Paragraph filtering matches fetch_paragraphs
+    (length, boilerplate, TOC-line rules), but internal links are counted on
+    EVERY <p> in the section, filtered or not, because a link list of short
+    lines is still evidence the section already links somewhere.
+
+    The crawler reports the page as it is - chapter banner headings
+    ("CHAPTER 4 - Market Size & Growth") and empty sections are kept, and
+    interpreting them is Agent 9's job, not the crawler's.
+    """
     resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
     resp.raise_for_status()
     resp.encoding = resp.apparent_encoding or resp.encoding  # avoid mojibake
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "nav", "header", "footer", "form"]):
         tag.decompose()
-    paras = [_clean(p.get_text(" ", strip=True)) for p in soup.find_all("p")]
-    return [p for p in paras
-            if len(p) > 60 and not is_boilerplate(p) and not is_toc_or_heading(p)]
+    level = "h2" if soup.find("h2") else "h3"
+    sections = [{"heading": None, "order": 0, "paragraphs": [],
+                 "internal_link_count": 0}]
+    # walk <a> directly (not via <p>) so links in list items and divs are
+    # counted too - several report templates render related-report links as
+    # <li>, which a p-only walk would miss entirely
+    for el in soup.find_all([level, "p", "a"]):
+        sec = sections[-1]
+        if el.name == level:
+            heading = _clean(el.get_text(" ", strip=True))
+            if heading:
+                sections.append({"heading": heading, "order": len(sections),
+                                 "paragraphs": [], "internal_link_count": 0})
+            continue
+        if el.name == "a":
+            if el.has_attr("href") and _is_internal_href(el["href"]):
+                sec["internal_link_count"] += 1
+            continue
+        text = _clean(el.get_text(" ", strip=True))
+        if len(text) > 60 and not is_boilerplate(text) and not is_toc_or_heading(text):
+            sec["paragraphs"].append(text)
+    if not sections[0]["paragraphs"] and not sections[0]["internal_link_count"]:
+        sections = sections[1:]
+        for i, s in enumerate(sections):
+            s["order"] = i
+    return sections
+
+
+def fetch_paragraphs(url: str, timeout: int = 20) -> list[str]:
+    """Return the meaningful body paragraphs of a page (chrome stripped)."""
+    return [p for s in fetch_sections(url, timeout) for p in s["paragraphs"]]
 
 
 def _tokens(text: str) -> set[str]:
