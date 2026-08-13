@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "ken-content-inventory": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.content_inventory"]
+    },
+    "ken-knowledge-graph": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.knowledge_graph"]
+    },
+    "ken-embedding-search": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.embedding_search"]
+    },
+    "ken-evidence-library": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.evidence_library"]
+    },
+    "ken-seo-rules": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.seo_rules"]
+    },
+    "ken-crawler": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.crawler"]
+    },
+    "ken-search-console": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.search_console"]
+    },
+    "ken-ga4": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.ga4"]
+    },
+    "ken-report-store": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.report_store"]
+    }
+  }
+}
