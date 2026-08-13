@@ -188,11 +188,20 @@ def test_section_purpose_map_populated_and_consistent():
     assert orphaned == 0
 
 
-def test_no_placement_left_unresolved():
-    # after the retry run, every recommendation has a confirmed placement
+def test_unresolved_placements_are_honest():
+    # 'unresolved' is a legitimate state (e.g. a source URL that renders as an
+    # empty catalogue shell with no usable body text). What must NEVER exist
+    # is an unresolved row still presenting a suggested sentence as if its
+    # placement were confirmed - that is exactly the dishonesty the
+    # placement_status field was added to prevent.
     conn = sqlite3.connect("ken_links.db")
-    unresolved = conn.execute(
+    dishonest = conn.execute(
         "SELECT COUNT(*) FROM link_recommendations "
-        "WHERE placement_status = 'unresolved'").fetchone()[0]
+        "WHERE placement_status = 'unresolved' "
+        "AND suggested_sentence IS NOT NULL").fetchone()[0]
+    stuck_planned = conn.execute(
+        "SELECT COUNT(*) FROM link_recommendations "
+        "WHERE status='pending' AND placement_status = 'planned'").fetchone()[0]
     conn.close()
-    assert unresolved == 0
+    assert dishonest == 0
+    assert stuck_planned == 0  # every pending row got a placement pass

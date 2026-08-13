@@ -56,3 +56,50 @@ def build_primary_anchor(market: str, country: str, title: str = "") -> tuple[st
 
 def is_generic(anchor: str) -> bool:
     return (anchor or "").strip().lower() in GENERIC_ANCHORS
+
+
+# Intent cues -> the anchor suffix that matches them (master PRD 13.7 "align
+# anchor with target page intent"). Checked in order; first cue found in the
+# surrounding sentence wins. Suffixes match the variants Agent 7 builds
+# ("<base> Outlook", "<base> Size", "<base> Trends and Forecast", ...).
+_INTENT_CUES = [
+    (("outlook", "forecast", "projected", "expected to reach", "future"),
+     ("outlook", "trends and forecast")),
+    (("growth", "grew", "growing", "cagr", "expand", "rising", "opportunit"),
+     ("growth and opportunities", "outlook")),
+    (("valued at", "worth", "usd", "size", "revenue", "billion", "million"),
+     ("size",)),
+    (("trend", "shift", "changing", "evolving"),
+     ("trends and forecast", "analysis")),
+    (("analysis", "landscape", "competitive", "players", "share"),
+     ("analysis",)),
+]
+
+
+def pick_anchor_for_context(options: list[str], sentence: str | None = None,
+                            section: str | None = None) -> list[str]:
+    """Reorder anchor options so variants matching the surrounding context
+    come first (the sentence the link sits in, or its section name).
+
+    Returns a NEW ordered list, never drops options - the caller still
+    rotates through it for diversity and skips anchors already taken. With
+    no contextual cue, the original order is preserved (primary first).
+    """
+    options = list(options or [])
+    if len(options) < 2:
+        return options
+    context = f"{sentence or ''} {section or ''}".lower()
+    if not context.strip():
+        return options
+    for cues, suffixes in _INTENT_CUES:
+        if any(cue in context for cue in cues):
+            preferred: list[str] = []
+            for s in suffixes:  # suffix order IS the preference order
+                preferred += [o for o in options
+                              if o.lower().endswith(s) and o not in preferred]
+            if preferred:
+                rest = [o for o in options if o not in preferred]
+                return preferred + rest
+            # cue found but no matching variant exists: keep original order
+            return options
+    return options

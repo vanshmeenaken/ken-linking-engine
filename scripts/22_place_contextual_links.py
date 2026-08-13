@@ -44,6 +44,7 @@ import uuid
 from agents.agent_9_section_purpose import (EXCLUDED_PLACEMENT_PURPOSES,
                                             classify_heading)
 from agents.agent_10_seo_validation import SEOValidationAgent
+from analysis.anchor_text import pick_anchor_for_context
 from analysis.contextual_placement import (best_placement, best_placement_semantic,
                                           fetch_sections, subject_text,
                                           target_keywords)
@@ -268,10 +269,18 @@ def main(argv=None) -> int:
             if row["recommendation_id"] not in batch_ids
         }
         free = [o for o in options if o.lower() not in taken] or options
-        # strongest inbound link gets the best free anchor, next a variation
+        # strongest inbound link picks first; each pick is intent-aware (the
+        # variant matching the link's sentence/section goes first) and never
+        # repeats an anchor already assigned within this target's group
         group.sort(key=lambda u: -u["score"])
+        assigned: set[str] = set()
         for idx, u in enumerate(group):
-            u["anchor_text"] = free[idx % len(free)]
+            ordered = pick_anchor_for_context(
+                free, u.get("suggested_sentence"), u.get("placement_section"))
+            choice = next((c for c in ordered if c.lower() not in assigned),
+                          ordered[idx % len(ordered)])
+            assigned.add(choice.lower())
+            u["anchor_text"] = choice
             anchor_assigned += 1
 
     print(f"Contextual placements (in body): {contextual}")

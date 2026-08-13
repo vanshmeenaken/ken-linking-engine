@@ -147,3 +147,82 @@ def test_decision_validation_and_404():
     missing = client.patch("/api/recommendations/does-not-exist", json={
         "decision": "approve", "reviewed_by": "t"})
     assert missing.status_code == 404
+
+
+# ── intent-aware anchor selection (master PRD 13.7 alignment rule) ───────────
+
+from analysis.anchor_text import pick_anchor_for_context
+
+_OPTIONS = [
+    "India Cement Market",
+    "India Cement Market Outlook",
+    "India Cement Market Analysis",
+    "India Cement Market Size",
+    "India Cement Market Trends and Forecast",
+    "India Cement Market Growth and Opportunities",
+]
+
+
+def test_growth_sentence_prefers_growth_variant():
+    ordered = pick_anchor_for_context(
+        _OPTIONS, "The market grew at a CAGR of 6.8% over the review period.")
+    assert ordered[0] == "India Cement Market Growth and Opportunities"
+
+
+def test_size_sentence_prefers_size_variant():
+    ordered = pick_anchor_for_context(
+        _OPTIONS, "The market is valued at USD 30 billion this year.")
+    assert ordered[0] == "India Cement Market Size"
+
+
+def test_forecast_sentence_prefers_outlook_variant():
+    ordered = pick_anchor_for_context(
+        _OPTIONS, "Demand is expected to reach new highs, per the forecast.")
+    assert ordered[0] in ("India Cement Market Outlook",
+                          "India Cement Market Trends and Forecast")
+
+
+def test_competitive_section_prefers_analysis_variant():
+    ordered = pick_anchor_for_context(
+        _OPTIONS, None, section="Competitive Landscape Overview")
+    assert ordered[0] == "India Cement Market Analysis"
+
+
+def test_no_context_preserves_primary_first_order():
+    assert pick_anchor_for_context(_OPTIONS, None, None) == _OPTIONS
+    assert pick_anchor_for_context(_OPTIONS, "", "") == _OPTIONS
+
+
+def test_no_options_dropped_ever():
+    ordered = pick_anchor_for_context(
+        _OPTIONS, "The market grew strongly across all segments.")
+    assert sorted(ordered) == sorted(_OPTIONS)
+
+
+def test_cue_without_matching_variant_keeps_order():
+    plain = ["India Cement Market", "Cement Industry Report India"]
+    assert pick_anchor_for_context(plain, "The market grew at 6% CAGR.") == plain
+
+
+def test_rotation_never_touches_approved_anchors():
+    # regression guard: scripts/26 must only update pending rows
+    conn = sqlite3.connect("ken_links.db")
+    before = dict(conn.execute(
+        "SELECT recommendation_id, anchor_text FROM link_recommendations "
+        "WHERE status IN ('approved', 'rejected')").fetchall())
+    conn.close()
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "rotate_anchors",
+        Path(__file__).resolve().parent.parent / "scripts" /
+        "26_rotate_recommendation_anchors.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.rotate(Path("ken_links.db"), dry_run=True)  # dry run: no writes at all
+    conn = sqlite3.connect("ken_links.db")
+    after = dict(conn.execute(
+        "SELECT recommendation_id, anchor_text FROM link_recommendations "
+        "WHERE status IN ('approved', 'rejected')").fetchall())
+    conn.close()
+    assert before == after

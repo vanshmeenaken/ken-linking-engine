@@ -50,6 +50,14 @@ BOILERPLATE_MARKERS = (
     "we pride ourselves", "if you need any support",
     "our research team constantly", "while we don't replace",
     "instant access to the answers", "with one step in the future",
+    # catalogue promo lines - found via manual review as stored
+    # suggested_sentences; an editor had independently rejected one. Some
+    # report URLs render as near-empty category shells whose ONLY "paragraph"
+    # is this promo text; filtering it makes such pages honestly report "no
+    # usable body text" instead of hosting links in promo copy
+    "market research reports across 14 industries",
+    "2,50,000+ market research reports",
+    "explore market intelligence across key segments",
 )
 
 
