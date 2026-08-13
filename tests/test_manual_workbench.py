@@ -212,3 +212,117 @@ def test_manual_plans_are_separate_from_machine_recommendations():
     conn.close()
     _cleanup(plan_id)
     assert before == after
+
+
+# ── sentence suggestions ─────────────────────────────────────────────────────
+
+def test_suggestions_offer_several_positions_for_the_anchor():
+    r = client.post("/api/manual/suggest-sentences", json={
+        "sentence": "Distribution Channel is the fastest-growing dimension "
+                    "because revenue is moving toward brand websites.",
+        "anchor_text": "Vietnam Sports Broadcasting Media Market",
+        "relation_label": "adjacent_regional"})
+    assert r.status_code == 200
+    opts = r.json()["options"]
+    styles = {o["style"] for o in opts}
+    # the whole point is variety: the anchor must be offered in more than one
+    # position, not one repeatable shape
+    assert {"front", "mid", "subject"} <= styles
+    for o in opts:
+        assert "Vietnam Sports Broadcasting Media Market" in o["sentence"]
+        assert o["label"]
+    assert len({o["sentence"] for o in opts}) == len(opts)  # no duplicates
+
+
+def test_suggestions_do_not_mangle_proper_terms_or_lists():
+    # regression: front-loading lowercased "Distribution Channel" to
+    # "distribution Channel", and the mid option split inside a comma list
+    r = client.post("/api/manual/suggest-sentences", json={
+        "sentence": "Distribution Channel is the fastest-growing dimension "
+                    "because revenue is moving toward brand websites, "
+                    "applications, marketplaces, and omnichannel journeys.",
+        "anchor_text": "X Market", "relation_label": "adjacent_market"})
+    by_style = {o["style"]: o["sentence"] for o in r.json()["options"]}
+    assert "distribution Channel" not in by_style["front"]
+    # the mid insertion must land before the main verb, not inside the comma
+    # list - assert the STRUCTURE, since the connector wording varies by
+    # relationship type
+    mid = by_style["mid"]
+    assert mid.startswith("Distribution Channel,")
+    assert "X Market" in mid.split(" is ")[0], "anchor must sit before the verb"
+    assert "brand websites, applications, marketplaces" in mid, "list intact"
+
+
+def test_suggestions_require_sentence_and_anchor():
+    r = client.post("/api/manual/suggest-sentences", json={
+        "sentence": "", "anchor_text": "X Market"})
+    assert r.status_code == 422
+
+
+def test_suggestions_never_invent_a_number():
+    r = client.post("/api/manual/suggest-sentences", json={
+        "sentence": "Demand keeps rising across urban delivery zones.",
+        "anchor_text": "X Market", "relation_label": "same_market"})
+    for o in r.json()["options"]:
+        assert not any(ch.isdigit() for ch in o["sentence"])
+
+
+# ── several links on one report ──────────────────────────────────────────────
+
+def _wipe(created_by):
+    conn = sqlite3.connect("ken_links.db")
+    conn.execute("DELETE FROM manual_link_plans WHERE created_by = ?", (created_by,))
+    conn.commit()
+    conn.close()
+
+
+def test_multiple_links_can_be_recorded_for_one_report():
+    src = "https://www.kenresearch.com/industry-reports/pytest-multi-report"
+    try:
+        totals = []
+        for i in (1, 2, 3):
+            r = client.post("/api/manual/links", json={
+                "source_url": src,
+                "target_url": f"https://www.kenresearch.com/pytest-target-{i}",
+                "anchor_text": f"Target {i} Market",
+                "paragraph_index": i,
+                "chosen_sentence": f"A sentence naming Target {i} Market inside it.",
+                "suggestion_style": "front",
+                "created_by": "pytest-multi"})
+            assert r.status_code == 200
+            totals.append(r.json()["links_on_this_page"])
+        assert totals == [1, 2, 3]  # the count grows, nothing overwrites
+        listed = client.get(f"/api/manual/links?url={src}").json()
+        assert listed["count"] == 3
+        assert {p["paragraph_index"] for p in listed["plans"]} == {1, 2, 3}
+        assert all(p["chosen_sentence"] for p in listed["plans"])
+    finally:
+        _wipe("pytest-multi")
+
+
+def test_reusing_one_paragraph_is_reported_back():
+    # the same rule the automated pipeline enforces: two links should not sit
+    # in one sentence. Here it is surfaced as a warning, not a block - it is
+    # the user's own workbench and they may have a reason.
+    src = "https://www.kenresearch.com/industry-reports/pytest-clash-report"
+    try:
+        first = client.post("/api/manual/links", json={
+            "source_url": src, "target_url": "https://www.kenresearch.com/pytest-a",
+            "anchor_text": "A Market", "paragraph_index": 7,
+            "created_by": "pytest-clash"})
+        assert first.json()["paragraph_already_used_by"] is None
+        second = client.post("/api/manual/links", json={
+            "source_url": src, "target_url": "https://www.kenresearch.com/pytest-b",
+            "anchor_text": "B Market", "paragraph_index": 7,
+            "created_by": "pytest-clash"})
+        assert second.status_code == 200
+        assert "pytest-a" in (second.json()["paragraph_already_used_by"] or "")
+    finally:
+        _wipe("pytest-clash")
+
+
+def test_workbench_page_has_suggestion_and_custom_sentence_fields():
+    html = client.get("/users").text
+    assert 'id="suggestions"' in html
+    assert 'id="final-sentence"' in html
+    assert "write your own sentence" in html.lower()

@@ -24,9 +24,29 @@ Reached from the green **Users** button on the main dashboard, or directly at
    `adjacent`, or `adjacent regional`, and tagged by where they came from -
    `inventory` (our 500-page sample, including trusted relationship edges) or
    `sitemap` (Ken's live 5,000-page sitemap).
-4. **Record the decision.** Anchor text, a free-text note for the web team,
-   and your name.
-5. **Review saved decisions.** Everything saved for that report, deletable.
+4. **Record the decision.** The page offers several ways to word the
+   sentence, each placing the anchor in a different position (opening the
+   sentence, mid-clause as an appositive, or as the sentence's subject, plus
+   a trailing mention labelled as the weakest). Click one to load it, edit it
+   freely, or ignore them all and type your own. Whatever ends up in the
+   final-sentence box is what gets stored and handed to the web team. Add the
+   anchor text, an optional note, and your name.
+5. **Review saved decisions.** Everything saved for that report, with the
+   exact sentence to paste, deletable.
+
+## Several links on one report
+
+Saving keeps the report loaded, so the normal flow is: pick a paragraph, pick
+a target, save, then repeat. The confirmation reports the running total for
+that report, paragraphs that already carry a link are marked green in the
+content pane, and re-using one paragraph is called out ("this paragraph
+already carries a link to ..."). That mirrors the automated pipeline's rule
+that two links must not share a sentence, but here it is a warning rather
+than a block: it is the user's own workbench and they may have a reason.
+
+Sentence suggestions never invent a fact. They rearrange the paragraph's own
+wording and add a connector naming the target, so a suggestion cannot
+introduce a market number that was not already there.
 
 ## Where candidates come from
 

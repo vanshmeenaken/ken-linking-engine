@@ -1944,6 +1944,31 @@ def manual_page_content(url: str = Query(..., description="Report URL to read"))
             "paragraph_count": index, "sections": out}
 
 
+class SentenceSuggestionRequest(BaseModel):
+    sentence: str
+    anchor_text: str
+    relation_label: Optional[str] = ""
+
+
+@app.post("/api/manual/suggest-sentences")
+def manual_suggest_sentences(body: SentenceSuggestionRequest):
+    """Several ways to place the anchor inside the chosen paragraph's
+    sentence, for the user to pick from or edit. Each option puts the anchor
+    in a different position, because one repeated shape across a site is
+    detectable. Nothing is invented: the original wording is rearranged and a
+    connector naming the target is added. The user can always ignore all of
+    them and write their own."""
+    from analysis.sentence_composer import suggest_sentence_framings
+
+    options = suggest_sentence_framings(
+        body.sentence, body.anchor_text, body.relation_label or "")
+    if not options:
+        raise HTTPException(
+            status_code=422,
+            detail="Need both a sentence and an anchor to suggest wording.")
+    return {"count": len(options), "options": options}
+
+
 class ManualLinkPlan(BaseModel):
     source_url: str
     target_url: str
@@ -1951,6 +1976,8 @@ class ManualLinkPlan(BaseModel):
     section_heading: Optional[str] = None
     paragraph_index: Optional[int] = None
     paragraph_excerpt: Optional[str] = None
+    chosen_sentence: Optional[str] = None
+    suggestion_style: Optional[str] = None
     placement_note: Optional[str] = None
     relation_label: Optional[str] = None
     found_via: Optional[str] = None
@@ -1968,22 +1995,41 @@ def create_manual_link_plan(body: ManualLinkPlan):
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     plan_id = str(uuid.uuid4())
     conn = get_db()
+    # Two links from the same page must not land in the same paragraph - the
+    # same rule the automated pipeline enforces. Warned, not blocked: a human
+    # may have a reason, and this is their workbench.
+    clash = None
+    if body.paragraph_index is not None:
+        clash = conn.execute(
+            """SELECT target_url FROM manual_link_plans
+               WHERE REPLACE(REPLACE(LOWER(RTRIM(source_url,'/')),'https://',''),
+                     'http://','') = ?
+                 AND paragraph_index = ?""",
+            (_norm_url(body.source_url), body.paragraph_index)).fetchone()
     conn.execute(
         """INSERT INTO manual_link_plans
            (plan_id, source_url, target_url, anchor_text, section_heading,
-            paragraph_index, paragraph_excerpt, placement_note,
+            paragraph_index, paragraph_excerpt, chosen_sentence,
+            suggestion_style, placement_note,
             relation_label, found_via, created_by, status,
             created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,'planned',?,?)""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'planned',?,?)""",
         (plan_id, body.source_url.strip(), body.target_url.strip(),
          body.anchor_text.strip(), body.section_heading,
-         body.paragraph_index, body.paragraph_excerpt, body.placement_note,
+         body.paragraph_index, body.paragraph_excerpt,
+         body.chosen_sentence, body.suggestion_style, body.placement_note,
          body.relation_label, body.found_via, body.created_by, now, now))
     conn.commit()
     row = conn.execute(
         "SELECT * FROM manual_link_plans WHERE plan_id = ?", (plan_id,)).fetchone()
+    total_for_page = conn.execute(
+        """SELECT COUNT(*) FROM manual_link_plans
+           WHERE REPLACE(REPLACE(LOWER(RTRIM(source_url,'/')),'https://',''),
+                 'http://','') = ?""", (_norm_url(body.source_url),)).fetchone()[0]
     conn.close()
-    return {"created": True, **dict(row)}
+    return {"created": True, "links_on_this_page": total_for_page,
+            "paragraph_already_used_by": clash[0] if clash else None,
+            **dict(row)}
 
 
 @app.get("/api/manual/links")

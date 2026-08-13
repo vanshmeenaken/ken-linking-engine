@@ -131,16 +131,31 @@
       <div class="panel">
         <h2>4. Record your decision</h2>
         <div id="pick-summary" class="pick">Nothing selected yet.</div>
+
         <label for="anchor">Anchor text (the clickable words)</label>
-        <input type="text" id="anchor" class="full" placeholder="e.g. India Online Grocery Market" />
-        <label for="note">Your note (why here, any instruction for the web team)</label>
-        <textarea id="note" placeholder="e.g. place mid-paragraph after the CAGR figure"></textarea>
+        <input type="text" id="anchor" class="full" placeholder="e.g. India Online Grocery Market"
+               oninput="anchorEdited=true" />
+
+        <label>Suggested wording &mdash; click one to use it, then edit freely</label>
+        <div id="suggestions"><div class="note">Pick a paragraph and a target page to see suggestions.</div></div>
+
+        <label for="final-sentence">Final sentence (this is what the web team will paste)</label>
+        <textarea id="final-sentence" style="min-height:96px;"
+                  placeholder="Choose a suggestion above, or write your own sentence here."
+                  oninput="sentenceEdited=true"></textarea>
+
+        <label for="note">Your note (any extra instruction for the web team)</label>
+        <textarea id="note" placeholder="e.g. link the first mention only"></textarea>
         <label for="who">Your name</label>
         <input type="text" id="who" class="full" value="workbench-user" />
         <div style="margin-top:12px;">
           <button class="btn green" onclick="savePlan()">Save this link decision</button>
           <button class="btn ghost" onclick="clearPick()">Clear selection</button>
         </div>
+        <p class="note" style="margin-top:8px;">
+          Saving keeps the report loaded so you can add more links to it:
+          pick another paragraph and another target, then save again.
+        </p>
         <div id="save-msg"></div>
       </div>
     </div>
@@ -154,7 +169,10 @@
 
 <script>
 const API = "";
-let state = { sourceUrl: "", para: null, target: null };
+let state = { sourceUrl: "", para: null, target: null, style: null };
+// track manual edits so auto-fill never overwrites what the user typed
+let anchorEdited = false;
+let sentenceEdited = false;
 
 const esc = (s) => (s || "").replace(/[&<>"']/g, c => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -201,6 +219,19 @@ async function loadAll() {
 async function loadContent(url) {
   const wrap = document.getElementById("content-wrap");
   try {
+    // which paragraphs already carry a recorded link, so the same sentence is
+    // not silently reused for two different targets
+    let used = {};
+    try {
+      const saved = await getJSON(`${API}/api/manual/links?url=${encodeURIComponent(url)}`);
+      saved.plans.forEach(p => {
+        if (p.paragraph_index !== null && p.paragraph_index !== undefined) {
+          used[p.paragraph_index] = (used[p.paragraph_index] || []).concat(
+            p.target_url.split("/").pop());
+        }
+      });
+    } catch (e) { /* listing is advisory only */ }
+    window._usedParas = used;
     const data = await getJSON(`${API}/api/manual/content?url=${encodeURIComponent(url)}`);
     if (!data.section_count) {
       wrap.innerHTML = `<div class="msg err">${esc(data.note || "No readable content on that page.")}</div>`;
@@ -219,6 +250,10 @@ async function loadContent(url) {
             <div class="para" id="para-${p.paragraph_index}"
                  ${s.linkable ? `onclick="choosePara(${p.paragraph_index}, ${JSON.stringify(s.heading || "").replace(/"/g, "&quot;")})"` : ""}>
               ${esc(p.text)}
+              ${(used[p.paragraph_index] || []).length ? `
+              <div class="note" style="margin-top:5px; color:var(--green);">
+                Already linked here: ${esc(used[p.paragraph_index].join(", "))}
+              </div>` : ""}
             </div>`).join("")
             : `<div class="para" style="cursor:default; color:#9ca3af;">(no body text in this section)</div>`}
         </div>`).join("")}`;
@@ -274,6 +309,7 @@ function choosePara(idx, heading) {
   const info = (window._paraText || {})[idx] || {};
   state.para = { index: idx, text: info.text || "", heading: info.heading || heading || null };
   renderPick();
+  loadSuggestions();
 }
 
 function chooseTarget(i) {
@@ -281,10 +317,55 @@ function chooseTarget(i) {
   const el = document.getElementById(`cand-${i}`);
   if (el) el.classList.add("chosen");
   state.target = (window._cands || {})[i] || null;
-  if (state.target && !document.getElementById("anchor").value.trim()) {
+  // Refill the anchor whenever the target changes unless the user typed their
+  // own. Previously the anchor was only filled when empty, so switching
+  // targets left the OLD anchor beside the new "Link to" - they disagreed.
+  if (state.target && !anchorEdited) {
     document.getElementById("anchor").value = state.target.title_guess || "";
   }
   renderPick();
+  loadSuggestions();
+}
+
+async function loadSuggestions() {
+  const wrap = document.getElementById("suggestions");
+  const anchor = document.getElementById("anchor").value.trim();
+  if (!state.para || !state.para.text || !anchor) {
+    wrap.innerHTML = `<div class="note">Pick a paragraph and a target page to see suggestions.</div>`;
+    return;
+  }
+  wrap.innerHTML = `<div class="loading">Building wording options…</div>`;
+  try {
+    const data = await getJSON(`${API}/api/manual/suggest-sentences`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sentence: state.para.text, anchor_text: anchor,
+        relation_label: state.target ? (state.target.relation_label || "") : "",
+      }),
+    });
+    window._suggestions = {};
+    data.options.forEach((o, i) => { window._suggestions[i] = o; });
+    wrap.innerHTML = data.options.map((o, i) => `
+      <div class="cand" id="sug-${i}" onclick="useSuggestion(${i})">
+        <div class="note" style="margin-bottom:3px;"><strong>${esc(o.label)}</strong></div>
+        <div style="font-style:italic;">"${esc(o.sentence)}"</div>
+      </div>`).join("");
+    // preselect the first option only if the user has not written their own
+    if (!sentenceEdited) useSuggestion(0, true);
+  } catch (e) {
+    wrap.innerHTML = `<div class="msg err">Could not build suggestions: ${esc(e.message)}</div>`;
+  }
+}
+
+function useSuggestion(i, keepEditedFlag) {
+  const o = (window._suggestions || {})[i];
+  if (!o) return;
+  document.querySelectorAll(".cand[id^=sug-]").forEach(el => el.classList.remove("chosen"));
+  const el = document.getElementById(`sug-${i}`);
+  if (el) el.classList.add("chosen");
+  document.getElementById("final-sentence").value = o.sentence;
+  state.style = o.style;
+  if (!keepEditedFlag) sentenceEdited = false;
 }
 
 function renderPick() {
@@ -299,9 +380,13 @@ function renderPick() {
 
 function clearPick() {
   document.querySelectorAll(".para.chosen, .cand.chosen").forEach(el => el.classList.remove("chosen"));
-  state.para = null; state.target = null;
+  state.para = null; state.target = null; state.style = null;
+  anchorEdited = false; sentenceEdited = false;
   document.getElementById("anchor").value = "";
   document.getElementById("note").value = "";
+  document.getElementById("final-sentence").value = "";
+  document.getElementById("suggestions").innerHTML =
+    `<div class="note">Pick a paragraph and a target page to see suggestions.</div>`;
   renderPick();
   document.getElementById("save-msg").innerHTML = "";
 }
@@ -312,6 +397,7 @@ async function savePlan() {
   if (!state.sourceUrl) { msg.innerHTML = `<div class="msg err">Load a report first.</div>`; return; }
   if (!state.target) { msg.innerHTML = `<div class="msg err">Pick the page to link to (step 3).</div>`; return; }
   if (!anchor) { msg.innerHTML = `<div class="msg err">Anchor text is required.</div>`; return; }
+  const finalSentence = document.getElementById("final-sentence").value.trim();
   const payload = {
     source_url: state.sourceUrl,
     target_url: state.target.url,
@@ -319,19 +405,32 @@ async function savePlan() {
     section_heading: state.para ? state.para.heading : null,
     paragraph_index: state.para ? state.para.index : null,
     paragraph_excerpt: state.para ? (state.para.text || "").slice(0, 500) : null,
+    chosen_sentence: finalSentence || null,
+    suggestion_style: finalSentence
+      ? (sentenceEdited ? "edited-or-own" : (state.style || null)) : null,
     placement_note: document.getElementById("note").value.trim() || null,
     relation_label: state.target.relation_label || null,
     found_via: state.target.found_via || null,
     created_by: document.getElementById("who").value.trim() || "workbench-user",
   };
   try {
-    await getJSON(`${API}/api/manual/links`, {
+    const res = await getJSON(`${API}/api/manual/links`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    msg.innerHTML = `<div class="msg ok">Saved.</div>`;
+    const warn = res.paragraph_already_used_by
+      ? ` Note: this paragraph already carries a link to
+         ${esc(res.paragraph_already_used_by.split("/").pop())}, so two links
+         would sit in the same sentence.`
+      : "";
+    msg.innerHTML = `<div class="msg ok">Saved. This report now has
+      ${res.links_on_this_page} recorded link(s). Pick another paragraph and
+      target to add the next one.${warn}</div>`;
+    const keptUrl = state.sourceUrl;
     clearPick();
-    loadPlans(state.sourceUrl);
+    state.sourceUrl = keptUrl;   // stay on this report to add more links
+    loadPlans(keptUrl);
+    loadContent(keptUrl);        // refresh so used paragraphs are marked
   } catch (e) {
     msg.innerHTML = `<div class="msg err">Could not save: ${esc(e.message)}</div>`;
   }
@@ -349,14 +448,21 @@ async function loadPlans(url) {
     wrap.innerHTML = `
       <table>
         <thead><tr><th>From</th><th>Links to</th><th>Anchor</th>
-          <th>Placed in</th><th>Note</th><th>By</th><th></th></tr></thead>
+          <th>Placed in</th><th>Sentence to use</th><th>Note</th><th>By</th><th></th></tr></thead>
         <tbody>${data.plans.map(p => `
           <tr>
             <td><a href="${esc(p.source_url)}" target="_blank" rel="noopener">${esc(p.source_url.split("/").pop())}</a></td>
             <td><a href="${esc(p.target_url)}" target="_blank" rel="noopener">${esc(p.target_url.split("/").pop())}</a></td>
             <td>${esc(p.anchor_text)}</td>
             <td>${esc(p.section_heading || "-")}
-              ${p.paragraph_excerpt ? `<div class="note" style="font-style:italic;">"${esc(p.paragraph_excerpt.slice(0, 120))}…"</div>` : ""}</td>
+              ${p.paragraph_index !== null && p.paragraph_index !== undefined
+                ? `<div class="note">paragraph #${p.paragraph_index}</div>` : ""}</td>
+            <td style="max-width:340px;">${p.chosen_sentence
+              ? `<span style="font-style:italic;">"${esc(p.chosen_sentence)}"</span>
+                 ${p.suggestion_style ? `<div class="note">${esc(p.suggestion_style)}</div>` : ""}`
+              : (p.paragraph_excerpt
+                 ? `<span class="note" style="font-style:italic;">original: "${esc(p.paragraph_excerpt.slice(0, 110))}…"</span>`
+                 : "-")}</td>
             <td>${esc(p.placement_note || "-")}</td>
             <td>${esc(p.created_by || "-")}</td>
             <td><button class="btn red small" onclick="deletePlan('${p.plan_id}')">Delete</button></td>

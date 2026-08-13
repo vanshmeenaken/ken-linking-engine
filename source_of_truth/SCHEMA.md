@@ -103,8 +103,12 @@ manual_link_plans stores HUMAN-authored link decisions from the workbench:
 source/target URL, anchor, section heading, paragraph index and excerpt, the
 person's own note, how the candidate was found, and who recorded it.
 Deliberately separate from link_recommendations (machine suggestions) so
-provenance is never ambiguous. Migration:
+provenance is never ambiguous. chosen_sentence holds the exact wording the
+user settled on (what the web team pastes) and suggestion_style records
+whether it came from an offered framing or was written from scratch.
+Migrations:
 python scripts/37_manual_linking_migration.py
+python scripts/38_chosen_sentence_migration.py
 
 ## Section and Evidence Tables (Agents 9 and 8)
 
