@@ -16,3 +16,6 @@ credentials/
 client_secret*.json
 token.json
 *.credentials.json
+
+# derived vector index (rebuild with scripts/31_vector_backend_setup.py)
+ken_vectors.db*

@@ -32,6 +32,7 @@ scripts/23_vector_search_migration.py.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,13 @@ DEFAULT_DB = ROOT / "ken_links.db"
 EMBEDDING_MODEL = "tfidf-v1"  # recorded per-vector so a future model swap is
                               # detectable and re-embedding can target only
                               # stale rows
+
+# Index backend: "bruteforce" (default - exact cosine over in-memory dicts,
+# proven at 500-page scale) or "sqlite_vec" (a real vector index; see
+# analysis/vector_index.py). Selection is per-process via env so nothing
+# breaks when the extension is missing - an unavailable backend falls back
+# to bruteforce with a warning instead of failing.
+VECTOR_BACKEND = os.environ.get("VECTOR_BACKEND", "bruteforce").lower()
 
 
 @dataclass
@@ -61,14 +69,31 @@ class VectorStore:
     _vectors: dict[str, dict[str, float]] = field(default_factory=dict)
     _texts: dict[str, str] = field(default_factory=dict)
 
+    _index: object | None = None  # SqliteVecIndex when the backend is active
+
     @classmethod
-    def fit(cls, items: list[tuple[str, str]]) -> "VectorStore":
+    def fit(cls, items: list[tuple[str, str]],
+            backend: str | None = None) -> "VectorStore":
         """Build a store from (item_id, text) pairs, fitting IDF over all of
-        them so results are internally consistent."""
+        them so results are internally consistent. `backend` overrides the
+        VECTOR_BACKEND env selection for this store."""
         corpus = build_corpus([text for _, text in items])
         store = cls(corpus=corpus)
         for item_id, text in items:
             store.add(item_id, text)
+        chosen = (backend or VECTOR_BACKEND).lower()
+        if chosen == "sqlite_vec" and store._vectors:
+            try:
+                from analysis.vector_index import SqliteVecIndex
+                vocab = sorted({t for v in store._vectors.values() for t in v})
+                index = SqliteVecIndex(vocab)
+                for item_id, vec in store._vectors.items():
+                    index.add(item_id, vec)
+                store._index = index
+            except Exception as exc:  # extension missing/broken: stay exact
+                import warnings
+                warnings.warn(f"sqlite_vec backend unavailable ({exc}); "
+                              "falling back to bruteforce")
         return store
 
     def add(self, item_id: str, text: str) -> None:
@@ -81,9 +106,17 @@ class VectorStore:
 
     def search(self, query_text: str, top_k: int = 5,
               exclude: set[str] | None = None) -> list[SearchResult]:
-        """Top-k items by cosine similarity to `query_text`."""
+        """Top-k items by cosine similarity to `query_text`. Uses the
+        vector index when one was built at fit time; exact brute-force
+        cosine otherwise. Results are identical either way (the index is
+        exact at this scale); only the lookup mechanism differs."""
         qvec = self.embed_query(query_text)
         exclude = exclude or set()
+        if self._index is not None:
+            hits = self._index.search(qvec, top_k=top_k + len(exclude))
+            return [SearchResult(item_id=iid, score=score,
+                                 text=self._texts.get(iid, ""))
+                    for iid, score in hits if iid not in exclude][:top_k]
         scored = [
             SearchResult(item_id=iid, score=cosine(qvec, vec), text=self._texts[iid])
             for iid, vec in self._vectors.items() if iid not in exclude
