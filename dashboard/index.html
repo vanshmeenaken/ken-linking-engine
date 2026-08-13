@@ -985,7 +985,13 @@ async function loadRecommendations() {
           const isContextual = r.placement_type === "contextual_body";
           const whereLabel = (r.placement_section || r.placement_type || "").replace(/_/g, " ");
           const placementPending = ["planned", "unresolved"].includes(r.placement_status);
-          const whereCell = placementPending
+          const reasonLine = r.placement_reason
+            ? `<div class="panel-note" style="margin-top:6px; background:#f0f6ff;
+                 border-radius:6px; padding:5px 8px;">
+                 <strong>Why here:</strong> ${escapeHtml(r.placement_reason)}
+               </div>`
+            : "";
+          const whereCell = (placementPending
             ? `<div><strong>${whereLabel}</strong></div>
                <div class="panel-note" style="margin-top:4px;">
                  Placement awaiting source-page verification.
@@ -994,6 +1000,16 @@ async function loadRecommendations() {
             ? `<div><strong>${whereLabel}</strong></div>
                <div class="panel-note" style="margin-top:4px; font-style:italic;">
                  "...${escapeHtml(r.suggested_sentence)}..."
+               </div>`
+            : r.placement_type === "best_available_paragraph" && r.proposed_sentence
+            ? `<div><strong>${whereLabel}</strong></div>
+               <div class="panel-note" style="margin-top:4px;">
+                 <strong>Add this new sentence:</strong>
+                 <span style="font-style:italic;">"${escapeHtml(r.proposed_sentence)}"</span>
+               </div>
+               <div class="panel-note" style="margin-top:4px;">
+                 right after: <span style="font-style:italic;">
+                 "...${escapeHtml(r.suggested_sentence || "")}..."</span>
                </div>`
             : r.placement_type === "best_available_paragraph" && r.suggested_sentence
             ? `<div><strong>${whereLabel}</strong></div>
@@ -1013,7 +1029,7 @@ async function loadRecommendations() {
             : `<div><strong>${whereLabel}</strong></div>
                <div class="panel-note" style="margin-top:4px;">
                  No single sentence fits well — shown as a related-reports link instead.
-               </div>`;
+               </div>`) + reasonLine;
           const id = r.recommendation_id;
           const relationshipLabel = (r.relationship_class || r.relationship_type || "").replace(/_/g, " ");
           const marketPct = Math.round((r.market_match_score || 0) * 100);

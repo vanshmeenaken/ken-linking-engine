@@ -69,6 +69,10 @@ def _placement_sentence(rec: dict) -> str:
         return (f'Inside the existing "{rec.get("placement_section", "body")}" '
                 f'text, in the sentence: "{rec["suggested_sentence"]}"')
     if rec["placement_type"] == "best_available_paragraph" and rec.get("suggested_sentence"):
+        if rec.get("proposed_sentence"):
+            return (f'In the "{rec.get("placement_section", "body")}" section: '
+                    f'insert this new sentence - "{rec["proposed_sentence"]}" - '
+                    f'right after the existing line "{rec["suggested_sentence"]}"')
         return (f'In the "{rec.get("placement_section", "body")}" section, in '
                 f'the best available paragraph: "{rec["suggested_sentence"]}" '
                 '(no sentence on the page strongly covers the target - this '
@@ -128,6 +132,15 @@ def _placement_reason(rec: dict, target_title: str) -> str:
         shared = sorted(_tokens(sentence) & _tokens(target_subject))
         overlap = (", ".join(f'"{w}"' for w in shared[:5])
                    if shared else "no strong shared subject terms")
+        if rec.get("proposed_sentence"):
+            return (f'No existing sentence on this page naturally fits this '
+                    f'anchor, so a new sentence was written for it (it makes '
+                    f'no market claims - it only points the reader to the '
+                    f'target). This paragraph is the page\'s closest topical '
+                    f'home for it ({overlap}), so the new sentence reads as '
+                    f'a natural continuation there instead of an off-topic '
+                    f'jump. The generic Related Reports block is not used '
+                    f'because that section may be removed from the site.')
         return (f'No sentence on this page strongly covers the target\'s '
                 f'subject, so this is the CLOSEST available paragraph '
                 f'({overlap}). Approve only if the link reads naturally '

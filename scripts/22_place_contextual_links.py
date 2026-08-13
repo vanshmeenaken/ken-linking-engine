@@ -48,6 +48,7 @@ from analysis.anchor_text import pick_anchor_for_context
 from analysis.contextual_placement import (best_placement, best_placement_semantic,
                                           fetch_sections, subject_text,
                                           target_keywords)
+from analysis.sentence_composer import compose_link_sentence
 from analysis.vector_store import VectorStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -229,6 +230,10 @@ def main(argv=None) -> int:
             # only for pages with no usable paragraphs at all.
             weak = best_placement_semantic(page_paras, query, min_score=0.0)
             if weak:
+                # suggested_sentence = the existing line the placement anchors
+                # to; proposed_sentence (set below, after anchors rotate) = a
+                # composed, claim-free sentence carrying the anchor, to be
+                # inserted right after that line
                 ptype, sentence = "best_available_paragraph", weak["sentence"]
                 headings = placeable_heading.get(nid, [])
                 idx = weak["paragraph_index"]
@@ -248,6 +253,7 @@ def main(argv=None) -> int:
                 related += 1
         updates.append({"id": r["recommendation_id"], "source": nid,
                         "target": r["target_node_id"],
+                        "relationship_type": r["relationship_type"],
                         "score": r["link_score"], "placement_type": ptype,
                         "placement_section": section, "suggested_sentence": sentence})
         updates[-1]["placement_status"] = "confirmed"
@@ -292,10 +298,24 @@ def main(argv=None) -> int:
             u["anchor_text"] = choice
             anchor_assigned += 1
 
+    # ── compose ready-to-insert sentences for weak-match placements ──────────
+    # done AFTER rotation so the composed sentence carries the FINAL anchor.
+    # The sentence is claim-free by construction (analysis/sentence_composer):
+    # it points the reader at the target without asserting any market fact.
+    composed = 0
+    for u in updates:
+        if (u["placement_status"] == "confirmed"
+                and u["placement_type"] == "best_available_paragraph"
+                and u.get("anchor_text")):
+            u["proposed_sentence"] = compose_link_sentence(
+                u["anchor_text"], u.get("relationship_type", ""))
+            composed += 1
+
     print(f"Contextual placements (in body): {contextual}")
     print(f"  via vector search  : {by_method['vector']}")
     print(f"  via keyword fallback: {by_method['keyword']}")
     print(f"Best-available paragraph (weak match): {weak_paragraphs}")
+    print(f"  with composed insert sentence : {composed}")
     print(f"Routed to Related Reports block : {related}")
     print(f"Placement unresolved (crawl/body): {len(unresolved_sources)} source pages")
     print(f"Anchors rotated from bank       : {anchor_assigned}")
@@ -345,12 +365,12 @@ def main(argv=None) -> int:
         conn.execute("BEGIN IMMEDIATE")
         for u in updates:
             sets = ["placement_type=?", "placement_section=?",
-                    "suggested_sentence=?", "placement_status=?",
-                    "validation_status=?",
+                    "suggested_sentence=?", "proposed_sentence=?",
+                    "placement_status=?", "validation_status=?",
                     "risk_flag=?", "risk_reason=?", "updated_at=?"]
             params = [u["placement_type"], u["placement_section"],
-                      u["suggested_sentence"], u["placement_status"],
-                      u["validation_status"],
+                      u["suggested_sentence"], u.get("proposed_sentence"),
+                      u["placement_status"], u["validation_status"],
                       u["risk_flag"], u["risk_reason"], now]
             if "anchor_text" in u:
                 sets.append("anchor_text=?"); params.append(u["anchor_text"])

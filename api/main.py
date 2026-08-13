@@ -1042,23 +1042,38 @@ def get_business_priority(
 def get_review_queue(limit: int = Query(50, ge=1, le=500)):
     """The editorial review queue: pending recommendations that passed
     validation, highest link score first. This is the list a human works down
-    to approve or reject links (master PRD 24.4)."""
+    to approve or reject links (master PRD 24.4). EVERY row carries its
+    placement_reason (why this exact spot) so the editor can judge each link
+    without opening a second view."""
+    from agents.agent_11_editorial_review import _placement_reason, clean_title
+
     conn = get_db()
     rows = conn.execute(
-        """SELECT recommendation_id, source_url, target_url, relationship_type,
-                  relationship_class, market_match_score, technology_match_score,
-                  anchor_text, placement_type, placement_section,
-                  suggested_sentence, placement_status, plan_category,
-                  source_plan_rank, link_score, seo_score, business_score,
-                  score_band, risk_flag, recommendation_reason
-           FROM link_recommendations
-           WHERE status = 'pending' AND score_band != 'drop'
-           ORDER BY link_score DESC
+        """SELECT r.recommendation_id, r.source_url, r.target_url,
+                  r.relationship_type,
+                  r.relationship_class, r.market_match_score,
+                  r.technology_match_score,
+                  r.anchor_text, r.placement_type, r.placement_section,
+                  r.suggested_sentence, r.proposed_sentence,
+                  r.placement_status, r.plan_category,
+                  r.source_plan_rank, r.link_score, r.seo_score,
+                  r.business_score, r.score_band, r.risk_flag,
+                  r.recommendation_reason, t.title AS target_title
+           FROM link_recommendations r
+           JOIN content_nodes t ON t.node_id = r.target_node_id
+           WHERE r.status = 'pending' AND r.score_band != 'drop'
+           ORDER BY r.link_score DESC
            LIMIT ?""",
         (limit,),
     ).fetchall()
     conn.close()
-    return {"count": len(rows), "recommendations": [dict(r) for r in rows]}
+    out = []
+    for r in rows:
+        rec = dict(r)
+        rec["placement_reason"] = _placement_reason(
+            rec, clean_title(rec.pop("target_title") or ""))
+        out.append(rec)
+    return {"count": len(out), "recommendations": out}
 
 
 # ── 32. Recommendation stats ─────────────────────────────────────────────────
@@ -1184,7 +1199,11 @@ def list_recommendations(
     relationship_type: Optional[str] = Query(None),
     relationship_class: Optional[str] = Query(None),
 ):
-    """List link recommendations with full context, highest score first."""
+    """List link recommendations with full context, highest score first.
+    EVERY row carries its placement_reason (why this exact spot) so the
+    review table can show the justification inline for all links."""
+    from agents.agent_11_editorial_review import _placement_reason, clean_title
+
     conn = get_db()
     where, params = [], []
     if band:
@@ -1197,23 +1216,37 @@ def list_recommendations(
         where.append("LOWER(relationship_class) = LOWER(?)"); params.append(relationship_class)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(
-        f"SELECT COUNT(*) FROM link_recommendations {where_sql}", params).fetchone()[0]
+        f"SELECT COUNT(*) FROM link_recommendations r {where_sql}",
+        params).fetchone()[0]
     rows = conn.execute(
-        f"""SELECT recommendation_id, source_url, target_url, relationship_type,
-                   relationship_class, market_match_score, technology_match_score,
-                   anchor_text, placement_type, placement_section,
-                   suggested_sentence, placement_status, plan_category,
-                   source_plan_rank, link_score,
-                   seo_score, business_score, ai_readiness_score, confidence_score,
-                   score_band, risk_flag, risk_reason, recommendation_reason,
-                   validation_status, status
-            FROM link_recommendations {where_sql}
-            ORDER BY link_score DESC LIMIT ? OFFSET ?""",
+        f"""SELECT r.recommendation_id, r.source_url, r.target_url,
+                   r.relationship_type,
+                   r.relationship_class, r.market_match_score,
+                   r.technology_match_score,
+                   r.anchor_text, r.placement_type, r.placement_section,
+                   r.suggested_sentence, r.proposed_sentence,
+                   r.placement_status, r.plan_category,
+                   r.source_plan_rank, r.link_score,
+                   r.seo_score, r.business_score, r.ai_readiness_score,
+                   r.confidence_score,
+                   r.score_band, r.risk_flag, r.risk_reason,
+                   r.recommendation_reason,
+                   r.validation_status, r.status, t.title AS target_title
+            FROM link_recommendations r
+            JOIN content_nodes t ON t.node_id = r.target_node_id
+            {where_sql}
+            ORDER BY r.link_score DESC LIMIT ? OFFSET ?""",
         params + [limit, skip],
     ).fetchall()
     conn.close()
+    out = []
+    for r in rows:
+        rec = dict(r)
+        rec["placement_reason"] = _placement_reason(
+            rec, clean_title(rec.pop("target_title") or ""))
+        out.append(rec)
     return {"total": total, "skip": skip, "limit": limit,
-            "recommendations": [dict(r) for r in rows]}
+            "recommendations": out}
 
 
 # ── 34. Anchor bank for one page (Agent 7) ───────────────────────────────────
