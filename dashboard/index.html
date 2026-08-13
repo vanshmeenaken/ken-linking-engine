@@ -1012,6 +1012,9 @@ async function loadRecommendations() {
                <div class="panel-note" style="margin-top:4px; background:#eefbf0; border-radius:6px; padding:5px 8px;">
                  <strong>Rewrite it to:</strong>
                  <span style="font-style:italic;">"${escapeHtml(r.woven_sentence)}"</span>
+                 ${r.woven_sentence_source === "template" ? `
+                 <div style="margin-top:3px; color:#92400e;">Template wording
+                   (AI rewrite unavailable for this one) &mdash; edit freely.</div>` : ""}
                </div>` : ""}`
             : r.placement_type === "best_available_paragraph" && r.proposed_sentence
             ? `<div><strong>${whereLabel}</strong></div>

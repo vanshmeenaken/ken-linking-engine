@@ -76,6 +76,22 @@ anchor_banks stores safe anchor variants per target. Run
 python scripts/27_report_link_planning_migration.py after the Phase 3 migration
 to add the planning table and placement/plan fields.
 
+## Sentence Fields on link_recommendations
+
+suggested_sentence is the EXISTING sentence on the source page that the
+placement anchors to (unchanged prose, quoted for the editor).
+
+woven_sentence is the ready-to-paste rewrite of that sentence with the anchor
+woven in, and woven_sentence_source records whether it came from the LLM
+('llm') or the deterministic template fallback ('template'). Populated by
+python scripts/36_generate_woven_sentences.py; migration:
+python scripts/35_woven_sentence_migration.py
+
+proposed_sentence is an entirely NEW claim-free sentence, used only when no
+existing sentence fits (placement_type='best_available_paragraph'), to be
+inserted after the named line. Migration:
+python scripts/33_proposed_sentence_migration.py
+
 ## Section and Evidence Tables (Agents 9 and 8)
 
 section_purpose_map stores one row per crawled section of a page: real

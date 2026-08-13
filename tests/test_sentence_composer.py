@@ -159,6 +159,10 @@ from analysis.sentence_composer import _WEAVE_CLAUSES  # noqa: E402  (used above
 # ── every queue row shows the woven, ready-to-use sentence ───────────────────
 
 def test_review_queue_has_woven_sentence_for_contextual_placements():
+    # note: woven_sentence may come from the LLM (scripts/36) or the
+    # deterministic template fallback - an LLM rewrite is free to restructure
+    # the sentence, so this only checks the anchor is present, never an
+    # exact-prefix match (that would only hold for the template path)
     r = client.get("/api/recommendations/review-queue?limit=500")
     rows = r.json()["recommendations"]
     contextual = [row for row in rows
@@ -169,5 +173,3 @@ def test_review_queue_has_woven_sentence_for_contextual_placements():
         assert row.get("woven_sentence"), (
             f"no woven_sentence for {row['recommendation_id']}")
         assert row["anchor_text"] in row["woven_sentence"]
-        assert row["woven_sentence"].startswith(
-            row["suggested_sentence"].rstrip(".!?")[:40])

@@ -216,6 +216,8 @@ MCP servers are live; the vector store has a real index backend.
 - 1,249 sections classified across 103 pages (Agent 9, section_purpose_map); placement now uses real section names and never places links in author bios, FAQs, TOCs, or CTAs.
 - 1,275 paragraphs mapped (Agent 8, paragraph_evidence_map): 328 market claims, 189 unsupported, 14 with genuine evidence pages attached (three gates: similarity, geography, subject).
 - Anchor rotation is intent-aware: the variant matching the link's sentence is preferred (growth sentence gets the Growth anchor).
+- Every in-sentence placement carries a ready-to-paste rewrite of that sentence with the anchor woven in, written by an LLM (NVIDIA NIM, `meta/llama-3.3-70b-instruct`) and verified to preserve every original number, with a deterministic template fallback. See `docs/06-INTEGRATIONS/03-NVIDIA-LLM-SENTENCE-REWRITE.md`.
+- Cross-report links are barred from a report's own opening hero stat and its Market Overview section (editorial rule): those stay focused on the report's own market.
 - 9 MCP servers (76 tools) expose the system to MCP clients, read-only by construction: `.mcp.json`, docs in `docs/07-MCP/01-MCP-SERVERS.md`.
 - Vector search can run on a real index (sqlite-vec) behind the unchanged VectorStore interface; brute-force stays the default. `scripts/31_vector_backend_setup.py` builds it (498 page + 911 paragraph vectors verified).
 - All placements confirmed except 1 honest unresolved (a source URL that renders as an empty catalogue shell).

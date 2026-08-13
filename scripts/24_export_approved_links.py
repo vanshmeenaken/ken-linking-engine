@@ -29,6 +29,9 @@ DB_PATH = "ken_links.db"
 COLUMNS = [
     "recommendation_id", "source_url", "target_url", "anchor_text",
     "placement_type", "placement_section", "suggested_sentence",
+    # the ready-to-paste rewrite: the existing sentence with the anchor woven
+    # in (scripts/36, LLM with template fallback), plus which path produced it
+    "woven_sentence", "woven_sentence_source", "proposed_sentence",
     "relationship_type", "relationship_class", "market_match_score",
     "technology_match_score", "link_score", "score_band", "approved_by",
     "recommendation_reason", "editorial_note", "updated_at",

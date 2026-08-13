@@ -263,3 +263,32 @@ def test_used_sentences_seeded_from_all_confirmed_not_just_approved():
     assert "status != 'rejected'" in seed_block
     assert "placement_status = 'confirmed'" in seed_block
     assert "status IN ('approved', 'deployed')" not in seed_block
+
+
+def test_template_section_descriptor_blurbs_are_boilerplate():
+    # regression: Ken's report template renders a section-descriptor blurb
+    # under several headings - the IDENTICAL sentence on 13+ pages with only
+    # the market name swapped in. It mentions the market so it scores well,
+    # but template text is not "about" any one market, so a link there is
+    # not genuinely contextual. Found via manual review of LLM rewrites.
+    assert is_boilerplate(
+        "Comprehensive analysis of key factors shaping the Indonesia Online "
+        "Grocery Market, including growth drivers, market challenges, and "
+        "emerging opportunities across consumer segments.")
+    assert is_boilerplate(
+        "This section evaluates the historical market size, analyzes "
+        "year-over-year growth dynamics, and presents the forecast outlook.")
+
+
+def test_blurb_filter_does_not_reject_genuine_analysis_prose():
+    # sentences that genuinely analyse a market must survive, even when they
+    # use words like "analysis", "growth drivers", or "competitive landscape"
+    assert not is_boilerplate(
+        "Growth drivers in the Indonesia online grocery market are shifting "
+        "from discount-led acquisition toward basket economics and retention.")
+    assert not is_boilerplate(
+        "Our analysis of the competitive landscape shows the top three "
+        "players hold a combined 46% share of national GMV.")
+    assert not is_boilerplate(
+        "The market size reached USD 1.2 billion in 2025, with year-over-year "
+        "growth moderating to 14% as pandemic demand normalised.")

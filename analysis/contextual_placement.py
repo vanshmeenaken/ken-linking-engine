@@ -58,6 +58,17 @@ BOILERPLATE_MARKERS = (
     "market research reports across 14 industries",
     "2,50,000+ market research reports",
     "explore market intelligence across key segments",
+    # Section-DESCRIPTOR blurbs from the report template: the identical
+    # sentence appears on 13+ pages with only the market name swapped in
+    # ("Comprehensive analysis of key factors shaping the {MARKET} Market,
+    # including growth drivers..."). They mention the market, so they score
+    # well, but a link placed in template text is not genuinely contextual -
+    # the same sentence is not "about" any one market. Found via manual
+    # review of the LLM rewrite output, where these read as filler.
+    "comprehensive analysis of key factors shaping",
+    "this section evaluates the historical market size",
+    "this section provides a detailed breakdown",
+    "this section examines the competitive landscape",
 )
 
 

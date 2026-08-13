@@ -66,6 +66,18 @@ def weave_anchor_into_sentence(sentence: str, anchor: str,
         return sentence
     clause = _WEAVE_CLAUSES.get(relationship_type, _DEFAULT_WEAVE_CLAUSE).format(
         anchor=anchor)
-    trailing = sentence[-1] if sentence[-1] in ".!?" else "."
-    body = sentence[:-1] if sentence[-1] in ".!?" else sentence
-    return f"{body}, {clause}{trailing}"
+    # Strip ANY trailing punctuation before appending the clause. Only
+    # stripping .!? produced malformed output on real page text: a sentence
+    # ending in a colon ("Ken Research deployed a three-phase engagement:")
+    # became "... engagement :, a dynamic also shaping ...". Sentences ending
+    # in a colon or semicolon introduce a list, so a clause cannot simply be
+    # appended - those become a separate following sentence instead.
+    body = sentence.rstrip()
+    if body[-1] in ":;?!":
+        # A colon/semicolon introduces a list, and a clause tacked onto a
+        # question or exclamation reads wrong ("Is now the right time to
+        # enter, a pattern also seen in..."). Keep the original line intact
+        # and add the link as its own following sentence.
+        return f"{body} {clause[0].upper()}{clause[1:]}."
+    body = body.rstrip(".,;: ")
+    return f"{body}, {clause}."

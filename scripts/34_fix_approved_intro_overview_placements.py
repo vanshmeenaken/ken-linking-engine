@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agents.agent_9_section_purpose import (NEVER_CROSS_REPORT_LINK_PURPOSES,
                                             classify_heading)
 from agents.agent_10_seo_validation import SEOValidationAgent
-from analysis.contextual_placement import (_normalise_sentence, best_placement,
+from analysis.contextual_placement import (_normalise_sentence, best_placement, is_boilerplate,
                                           best_placement_semantic, fetch_sections,
                                           subject_text, target_keywords)
 
@@ -56,9 +56,15 @@ PLACEMENT_SECTION_FALLBACK = {
 
 
 def find_offenders(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Approved contextual links whose CURRENT placement breaks a rule the
+    pipeline now enforces: a banned section (the report's own hero stat or
+    Market Overview), or a sentence since recognised as boilerplate
+    (company pitch, catalogue promo, or a template section-descriptor blurb
+    repeated verbatim across many report pages)."""
     rows = conn.execute(
         """SELECT recommendation_id, source_node_id, target_node_id,
-                  relationship_type, anchor_text, placement_section
+                  relationship_type, anchor_text, placement_section,
+                  suggested_sentence, placement_status
            FROM link_recommendations
            WHERE status = 'approved' AND placement_type = 'contextual_body'"""
     ).fetchall()
@@ -68,7 +74,12 @@ def find_offenders(conn: sqlite3.Connection) -> list[sqlite3.Row]:
             "SELECT purpose FROM section_purpose_map WHERE node_id=? AND heading=?",
             (r["source_node_id"], r["placement_section"])).fetchone()
         purpose = section["purpose"] if section else "intro"
-        if purpose in ("intro", "overview"):
+        # an approved row left 'unresolved' by an earlier pass (transient
+        # crawl failure, e.g. a 503 from the live site) still needs a real
+        # placement - re-running this script is the retry path
+        if (purpose in ("intro", "overview")
+                or is_boilerplate(r["suggested_sentence"] or "")
+                or r["placement_status"] == "unresolved"):
             offenders.append(r)
     return offenders
 

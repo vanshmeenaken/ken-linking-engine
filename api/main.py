@@ -1045,9 +1045,11 @@ def get_review_queue(limit: int = Query(50, ge=1, le=500)):
     to approve or reject links (master PRD 24.4). EVERY row carries its
     placement_reason (why this exact spot) and, for in-sentence placements,
     woven_sentence - the EXISTING sentence rewritten to carry the anchor
-    inline, so the editor sees exactly what to paste, not just where."""
-    from agents.agent_11_editorial_review import _placement_reason, clean_title
-    from analysis.sentence_composer import weave_anchor_into_sentence
+    inline, so the editor sees exactly what to paste, not just where.
+    woven_sentence is precomputed (scripts/36_generate_woven_sentences.py,
+    NVIDIA LLM with a deterministic fallback) - reading it here never makes
+    a live API call."""
+    from agents.agent_11_editorial_review import _placement_reason, _woven_sentence, clean_title
 
     conn = get_db()
     rows = conn.execute(
@@ -1056,7 +1058,8 @@ def get_review_queue(limit: int = Query(50, ge=1, le=500)):
                   r.relationship_class, r.market_match_score,
                   r.technology_match_score,
                   r.anchor_text, r.placement_type, r.placement_section,
-                  r.suggested_sentence, r.proposed_sentence,
+                  r.suggested_sentence, r.proposed_sentence, r.woven_sentence,
+                  r.woven_sentence_source,
                   r.placement_status, r.plan_category,
                   r.source_plan_rank, r.link_score, r.seo_score,
                   r.business_score, r.score_band, r.risk_flag,
@@ -1075,9 +1078,7 @@ def get_review_queue(limit: int = Query(50, ge=1, le=500)):
         rec["placement_reason"] = _placement_reason(
             rec, clean_title(rec.pop("target_title") or ""))
         rec["woven_sentence"] = (
-            weave_anchor_into_sentence(
-                rec["suggested_sentence"], rec["anchor_text"],
-                rec["relationship_type"])
+            _woven_sentence(rec)
             if rec["placement_type"] == "contextual_body"
                and rec.get("suggested_sentence")
             else None)
@@ -1211,8 +1212,7 @@ def list_recommendations(
     """List link recommendations with full context, highest score first.
     EVERY row carries its placement_reason (why this exact spot) so the
     review table can show the justification inline for all links."""
-    from agents.agent_11_editorial_review import _placement_reason, clean_title
-    from analysis.sentence_composer import weave_anchor_into_sentence
+    from agents.agent_11_editorial_review import _placement_reason, _woven_sentence, clean_title
 
     conn = get_db()
     where, params = [], []
@@ -1234,7 +1234,8 @@ def list_recommendations(
                    r.relationship_class, r.market_match_score,
                    r.technology_match_score,
                    r.anchor_text, r.placement_type, r.placement_section,
-                   r.suggested_sentence, r.proposed_sentence,
+                   r.suggested_sentence, r.proposed_sentence, r.woven_sentence,
+                   r.woven_sentence_source,
                    r.placement_status, r.plan_category,
                    r.source_plan_rank, r.link_score,
                    r.seo_score, r.business_score, r.ai_readiness_score,
@@ -1255,9 +1256,7 @@ def list_recommendations(
         rec["placement_reason"] = _placement_reason(
             rec, clean_title(rec.pop("target_title") or ""))
         rec["woven_sentence"] = (
-            weave_anchor_into_sentence(
-                rec["suggested_sentence"], rec["anchor_text"],
-                rec["relationship_type"])
+            _woven_sentence(rec)
             if rec["placement_type"] == "contextual_body"
                and rec.get("suggested_sentence")
             else None)

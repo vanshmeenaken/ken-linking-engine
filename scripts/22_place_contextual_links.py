@@ -397,8 +397,13 @@ def main(argv=None) -> int:
     try:
         conn.execute("BEGIN IMMEDIATE")
         for u in updates:
+            # woven_sentence is a rewrite OF suggested_sentence, so changing
+            # the placement makes any stored rewrite stale - clear it here and
+            # let scripts/36 --only-missing regenerate. Leaving it would show
+            # the editor a rewrite quoting a sentence no longer in use.
             sets = ["placement_type=?", "placement_section=?",
                     "suggested_sentence=?", "proposed_sentence=?",
+                    "woven_sentence=NULL", "woven_sentence_source=NULL",
                     "placement_status=?", "validation_status=?",
                     "risk_flag=?", "risk_reason=?", "updated_at=?"]
             params = [u["placement_type"], u["placement_section"],

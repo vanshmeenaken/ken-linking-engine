@@ -65,11 +65,23 @@ def _risk_word(risk_flag: str | None) -> str:
             "high": "High risk, review carefully"}.get(risk_flag, "Unknown")
 
 
+def _woven_sentence(rec: dict) -> str:
+    """The natural-language rewrite of an existing sentence with the anchor
+    woven in. Prefers the stored, LLM-generated version (scripts/36) so an
+    external API call never happens on a read path; falls back to the
+    deterministic template only for rows scripts/36 has not processed yet -
+    so the field is never blank."""
+    stored = rec.get("woven_sentence")
+    if stored:
+        return stored
+    return weave_anchor_into_sentence(
+        rec["suggested_sentence"], rec.get("anchor_text", ""),
+        rec.get("relationship_type", ""))
+
+
 def _placement_sentence(rec: dict) -> str:
     if rec["placement_type"] == "contextual_body" and rec.get("suggested_sentence"):
-        woven = weave_anchor_into_sentence(
-            rec["suggested_sentence"], rec.get("anchor_text", ""),
-            rec.get("relationship_type", ""))
+        woven = _woven_sentence(rec)
         return (f'Inside the existing "{rec.get("placement_section", "body")}" '
                 f'text. Original sentence: "{rec["suggested_sentence"]}" - '
                 f'rewrite it to: "{woven}"')
@@ -227,8 +239,7 @@ def build_review_note(rec: dict, source_title: str, target_title: str) -> Review
         plain_summary += f' Note: {rec["risk_reason"]}.'
 
     woven_sentence = (
-        weave_anchor_into_sentence(rec["suggested_sentence"], rec["anchor_text"],
-                                   rec["relationship_type"])
+        _woven_sentence(rec)
         if rec["placement_type"] == "contextual_body" and rec.get("suggested_sentence")
         else None)
 
