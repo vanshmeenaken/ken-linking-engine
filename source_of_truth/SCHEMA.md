@@ -92,6 +92,20 @@ existing sentence fits (placement_type='best_available_paragraph'), to be
 inserted after the named line. Migration:
 python scripts/33_proposed_sentence_migration.py
 
+## Manual Workbench Tables (/users)
+
+sitemap_urls caches Ken's public sitemap (~5,000 URLs across the product,
+article, casestudy, survey, pov and blog child sitemaps) so the workbench can
+suggest related pages outside the 500-page inventory. Refresh with
+analysis.sitemap_index.refresh_sitemap_cache().
+
+manual_link_plans stores HUMAN-authored link decisions from the workbench:
+source/target URL, anchor, section heading, paragraph index and excerpt, the
+person's own note, how the candidate was found, and who recorded it.
+Deliberately separate from link_recommendations (machine suggestions) so
+provenance is never ambiguous. Migration:
+python scripts/37_manual_linking_migration.py
+
 ## Section and Evidence Tables (Agents 9 and 8)
 
 section_purpose_map stores one row per crawled section of a page: real

@@ -2,6 +2,7 @@ import sqlite3
 import os
 import sys
 import time
+import uuid
 from dataclasses import asdict
 from typing import Optional
 
@@ -50,6 +51,13 @@ def root():
 def dashboard():
     """Serve the self-contained visual dashboard (dashboard/index.html)."""
     return FileResponse(DASHBOARD_PATH)
+
+
+@app.get("/users")
+def users_workbench():
+    """Serve the manual interlinking workbench (dashboard/users.html): paste a
+    report URL, read its real content, and record link decisions by hand."""
+    return FileResponse(os.path.join(ROOT, "dashboard", "users.html"))
 
 
 # ── 2. Database statistics ───────────────────────────────────────────────────
@@ -1752,6 +1760,283 @@ def validate_internal_link(request: LinkValidationRequest):
         request.anchor_text, request.placement, request.proposed_target_url,
     )
     return asdict(result)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Manual interlinking workbench (/users)
+# ═════════════════════════════════════════════════════════════════════════════
+# A human pastes a report URL, reads that page's real content here, and
+# records where a link should go and why. Separate from the machine pipeline:
+# these are human-authored instructions (manual_link_plans), not machine
+# suggestions awaiting review (link_recommendations).
+
+
+def _norm_url(url: str) -> str:
+    u = (url or "").strip().rstrip("/")
+    for prefix in ("https://", "http://"):
+        if u.startswith(prefix):
+            u = u[len(prefix):]
+    return u.lower()
+
+
+@app.get("/api/manual/related")
+def manual_related(url: str = Query(..., description="Report URL to analyse"),
+                   limit: int = Query(25, ge=1, le=100)):
+    """Related, adjacent and regional pages for one URL.
+
+    Looks in the local inventory FIRST (real relationship edges plus the
+    subject gate over content_nodes), then tops up from the cached public
+    sitemap - the inventory holds 500 pages but the live site has thousands,
+    so a sitemap-only match is often the honest answer rather than "none".
+    Every candidate passes the same market/technology subject gate the
+    automated pipeline uses; geography alone never qualifies one.
+    """
+    from analysis.sitemap_index import (find_related_in_sitemap, slug_of,
+                                       slug_to_text)
+    from analysis.subject_similarity import market_technology_relevance
+    from analysis.tfidf_similarity import build_corpus
+
+    target_norm = _norm_url(url)
+    conn = get_db()
+    node = conn.execute(
+        """SELECT node_id, url, title, market, country, region, content_type
+           FROM content_nodes
+           WHERE REPLACE(REPLACE(LOWER(RTRIM(url,'/')),'https://',''),
+                         'http://','') = ?""", (target_norm,)).fetchone()
+    if node is None:
+        # The live site serves the same report under two paths - with and
+        # without the /industry-reports/ prefix - and the inventory stores only
+        # one of them. Matching on the slug (stable across both forms) is what
+        # lets a pasted URL still reach its trusted relationship edges instead
+        # of silently falling back to sitemap subject-matching.
+        node = conn.execute(
+            """SELECT node_id, url, title, market, country, region, content_type
+               FROM content_nodes
+               WHERE LOWER(REPLACE(RTRIM(url,'/'), '?', '')) LIKE ?
+               LIMIT 1""", (f"%/{slug_of(url).lower()}",)).fetchone()
+
+    from_db: list[dict] = []
+    if node is not None:
+        # trusted relationship edges first - these already passed Agent 3
+        for r in conn.execute(
+                """SELECT e.relationship_type, e.relationship_class,
+                          e.confidence_score, e.market_match_score,
+                          e.technology_match_score,
+                          CASE WHEN e.source_node_id=? THEN t.url ELSE s.url END AS url,
+                          CASE WHEN e.source_node_id=? THEN t.title ELSE s.title END AS title,
+                          CASE WHEN e.source_node_id=? THEN t.content_type
+                               ELSE s.content_type END AS content_type
+                   FROM relationship_edges e
+                   JOIN content_nodes s ON s.node_id = e.source_node_id
+                   JOIN content_nodes t ON t.node_id = e.target_node_id
+                   WHERE (e.source_node_id=? OR e.target_node_id=?)
+                     AND e.source_node_id != e.target_node_id
+                   ORDER BY e.confidence_score DESC""",
+                (node["node_id"],) * 5):
+            from_db.append({
+                "url": r["url"], "title_guess": r["title"],
+                "content_type": r["content_type"],
+                "relation_label": (r["relationship_class"]
+                                   or r["relationship_type"] or "related"),
+                "market_match_score": r["market_match_score"] or 0.0,
+                "technology_match_score": r["technology_match_score"] or 0.0,
+                "combined_score": r["confidence_score"] or 0.0,
+                "found_via": "inventory_edge",
+                "reason": f'trusted {r["relationship_type"]} edge',
+            })
+
+        # then other inventory pages that pass the subject gate
+        if len(from_db) < limit:
+            source_text = " ".join(filter(None, [node["market"], node["title"]]))
+            others = conn.execute(
+                """SELECT url, title, market, content_type FROM content_nodes
+                   WHERE status='active' AND node_id != ?""",
+                (node["node_id"],)).fetchall()
+            seen = {_norm_url(c["url"]) for c in from_db}
+            texts = [" ".join(filter(None, [o["market"], o["title"]]))
+                     for o in others]
+            corpus = build_corpus([source_text] + texts)
+            scored = []
+            for other, text in zip(others, texts):
+                if _norm_url(other["url"]) in seen:
+                    continue
+                rel = market_technology_relevance(corpus, source_text, text)
+                if not rel.accepted:
+                    continue
+                scored.append({
+                    "url": other["url"], "title_guess": other["title"],
+                    "content_type": other["content_type"],
+                    "relation_label": "adjacent",
+                    "market_match_score": rel.market_score,
+                    "technology_match_score": rel.technology_score,
+                    "combined_score": rel.combined_score,
+                    "found_via": "inventory_subject",
+                    "reason": rel.reason,
+                })
+            scored.sort(key=lambda c: -c["combined_score"])
+            from_db.extend(scored[: max(0, limit - len(from_db))])
+    conn.close()
+
+    # top up from the sitemap - always attempted, because the inventory is a
+    # 500-page sample and the best real candidate is often outside it
+    from_sitemap = []
+    if len(from_db) < limit:
+        seen = {_norm_url(c["url"]) for c in from_db}
+        for cand in find_related_in_sitemap(url, limit=limit):
+            if _norm_url(cand["url"]) in seen:
+                continue
+            from_sitemap.append(cand)
+            if len(from_db) + len(from_sitemap) >= limit:
+                break
+
+    candidates = (from_db + from_sitemap)[:limit]
+    return {
+        "source_url": url,
+        "in_inventory": node is not None,
+        "source_title": node["title"] if node is not None else
+                        slug_to_text(slug_of(url)).title(),
+        "counts": {"from_inventory": len(from_db),
+                   "from_sitemap": len(from_sitemap),
+                   "total": len(candidates)},
+        "candidates": candidates,
+    }
+
+
+@app.get("/api/manual/content")
+def manual_page_content(url: str = Query(..., description="Report URL to read")):
+    """The page's REAL section structure and paragraphs, so a human can read
+    it here and pick the exact paragraph a link belongs in. Live read-only
+    fetch; nothing is stored. Sections a link must never go in (author bio,
+    FAQ, CTA, TOC, the hero stat, Market Overview) are marked, not hidden -
+    the reader should see the whole page and know which parts are off limits.
+    """
+    from agents.agent_9_section_purpose import (NEVER_CROSS_REPORT_LINK_PURPOSES,
+                                                PURPOSE_RULES, classify_heading)
+    from analysis.contextual_placement import fetch_sections
+
+    try:
+        sections = fetch_sections(url)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not read that page: {type(exc).__name__}: {exc}")
+    if not sections:
+        return {"url": url, "section_count": 0, "sections": [],
+                "note": "That page has no readable body text."}
+
+    index = 0
+    out = []
+    for sec in sections:
+        purpose = classify_heading(sec["heading"])
+        blocked = purpose in NEVER_CROSS_REPORT_LINK_PURPOSES
+        paras = []
+        for text in sec["paragraphs"]:
+            paras.append({"paragraph_index": index, "text": text})
+            index += 1
+        out.append({
+            "heading": sec["heading"], "purpose": purpose,
+            "linkable": not blocked,
+            "guidance": PURPOSE_RULES.get(purpose, (False, ""))[1],
+            "paragraphs": paras,
+            "internal_link_count": sec["internal_link_count"],
+        })
+    return {"url": url, "section_count": len(out),
+            "paragraph_count": index, "sections": out}
+
+
+class ManualLinkPlan(BaseModel):
+    source_url: str
+    target_url: str
+    anchor_text: str
+    section_heading: Optional[str] = None
+    paragraph_index: Optional[int] = None
+    paragraph_excerpt: Optional[str] = None
+    placement_note: Optional[str] = None
+    relation_label: Optional[str] = None
+    found_via: Optional[str] = None
+    created_by: Optional[str] = "workbench-user"
+
+
+@app.post("/api/manual/links")
+def create_manual_link_plan(body: ManualLinkPlan):
+    """Record one human-authored link decision."""
+    if not body.anchor_text.strip():
+        raise HTTPException(status_code=422, detail="anchor_text is required")
+    if _norm_url(body.source_url) == _norm_url(body.target_url):
+        raise HTTPException(status_code=422,
+                            detail="a page cannot link to itself")
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    plan_id = str(uuid.uuid4())
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO manual_link_plans
+           (plan_id, source_url, target_url, anchor_text, section_heading,
+            paragraph_index, paragraph_excerpt, placement_note,
+            relation_label, found_via, created_by, status,
+            created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,'planned',?,?)""",
+        (plan_id, body.source_url.strip(), body.target_url.strip(),
+         body.anchor_text.strip(), body.section_heading,
+         body.paragraph_index, body.paragraph_excerpt, body.placement_note,
+         body.relation_label, body.found_via, body.created_by, now, now))
+    conn.commit()
+    row = conn.execute(
+        "SELECT * FROM manual_link_plans WHERE plan_id = ?", (plan_id,)).fetchone()
+    conn.close()
+    return {"created": True, **dict(row)}
+
+
+@app.get("/api/manual/links")
+def list_manual_link_plans(url: Optional[str] = Query(
+        None, description="Filter to one source URL")):
+    """Human-authored link decisions, newest first."""
+    conn = get_db()
+    if url:
+        rows = conn.execute(
+            """SELECT * FROM manual_link_plans
+               WHERE REPLACE(REPLACE(LOWER(RTRIM(source_url,'/')),
+                     'https://',''),'http://','') = ?
+               ORDER BY created_at DESC""", (_norm_url(url),)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM manual_link_plans ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return {"count": len(rows), "plans": [dict(r) for r in rows]}
+
+
+@app.delete("/api/manual/links/{plan_id}")
+def delete_manual_link_plan(plan_id: str):
+    conn = get_db()
+    existing = conn.execute(
+        "SELECT plan_id FROM manual_link_plans WHERE plan_id = ?",
+        (plan_id,)).fetchone()
+    if existing is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Plan '{plan_id}' not found")
+    conn.execute("DELETE FROM manual_link_plans WHERE plan_id = ?", (plan_id,))
+    conn.commit()
+    conn.close()
+    return {"deleted": True, "plan_id": plan_id}
+
+
+@app.get("/api/manual/sitemap/status")
+def manual_sitemap_status():
+    """How much of Ken's public sitemap is cached, and when it was fetched."""
+    from analysis.sitemap_index import cache_status
+    return cache_status()
+
+
+@app.post("/api/manual/sitemap/refresh")
+def manual_sitemap_refresh():
+    """Re-fetch Ken's sitemap index and its child sitemaps into the cache."""
+    from analysis.sitemap_index import cache_status, refresh_sitemap_cache
+    try:
+        written = refresh_sitemap_cache()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Sitemap fetch failed: {type(exc).__name__}: {exc}")
+    return {"refreshed": True, "urls_indexed": written, **cache_status()}
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
