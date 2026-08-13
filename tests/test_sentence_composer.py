@@ -91,3 +91,18 @@ def test_list_endpoint_has_placement_reason_on_every_row():
     for row in rows:
         assert row.get("placement_reason")
         assert "proposed_sentence" in row
+
+
+def test_list_endpoint_status_filter_does_not_500():
+    # regression: joining content_nodes for target_title made "status"
+    # ambiguous (both link_recommendations and content_nodes have it),
+    # crashing every filtered call with sqlite3.OperationalError
+    for status in ("pending", "approved", "rejected"):
+        r = client.get(f"/api/recommendations?limit=50&status={status}")
+        assert r.status_code == 200
+        assert all(row["status"] == status if status != "pending" else True
+                   for row in r.json()["recommendations"])
+    r = client.get("/api/recommendations?limit=10&band=hold")
+    assert r.status_code == 200
+    r = client.get("/api/recommendations?limit=10&relationship_class=regional")
+    assert r.status_code == 200

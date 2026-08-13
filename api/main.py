@@ -1207,13 +1207,13 @@ def list_recommendations(
     conn = get_db()
     where, params = [], []
     if band:
-        where.append("LOWER(score_band) = LOWER(?)"); params.append(band)
+        where.append("LOWER(r.score_band) = LOWER(?)"); params.append(band)
     if status:
-        where.append("LOWER(status) = LOWER(?)"); params.append(status)
+        where.append("LOWER(r.status) = LOWER(?)"); params.append(status)
     if relationship_type:
-        where.append("LOWER(relationship_type) = LOWER(?)"); params.append(relationship_type)
+        where.append("LOWER(r.relationship_type) = LOWER(?)"); params.append(relationship_type)
     if relationship_class:
-        where.append("LOWER(relationship_class) = LOWER(?)"); params.append(relationship_class)
+        where.append("LOWER(r.relationship_class) = LOWER(?)"); params.append(relationship_class)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(
         f"SELECT COUNT(*) FROM link_recommendations r {where_sql}",

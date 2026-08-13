@@ -974,14 +974,20 @@ async function loadRecommendations() {
   const escapeHtml = (s) => (s || "").replace(/[&<>"']/g, c => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  wrap.innerHTML = `
-    <table>
-      <thead>
-        <tr><th>From Page</th><th>Should Link To</th><th>Anchor Text</th>
-            <th>Relationship</th><th>Where It Goes</th><th>Score</th><th>Status</th><th>Review</th></tr>
-      </thead>
-      <tbody>
-        ${queue.recommendations.map(r => {
+  // Group by source page so an editor sees, together, EVERY link proposed
+  // FROM one report/article/case study — not scattered across a score-sorted
+  // list. Groups keep the score-sorted order of their first-seen row.
+  const groups = [];
+  const groupIndex = new Map();
+  for (const r of queue.recommendations) {
+    if (!groupIndex.has(r.source_url)) {
+      groupIndex.set(r.source_url, groups.length);
+      groups.push({ source_url: r.source_url, rows: [] });
+    }
+    groups[groupIndex.get(r.source_url)].rows.push(r);
+  }
+
+  const renderRow = (r) => {
           const isContextual = r.placement_type === "contextual_body";
           const whereLabel = (r.placement_section || r.placement_type || "").replace(/_/g, " ");
           const placementPending = ["planned", "unresolved"].includes(r.placement_status);
@@ -1034,7 +1040,7 @@ async function loadRecommendations() {
           const relationshipLabel = (r.relationship_class || r.relationship_type || "").replace(/_/g, " ");
           const marketPct = Math.round((r.market_match_score || 0) * 100);
           const technologyPct = Math.round((r.technology_match_score || 0) * 100);
-          return `
+    return `
           <tr>
             <td><a href="${r.source_url}" target="_blank" rel="noopener">${r.source_url.split("/").pop()}</a></td>
             <td><a href="${r.target_url}" target="_blank" rel="noopener">${r.target_url.split("/").pop()}</a></td>
@@ -1048,10 +1054,33 @@ async function loadRecommendations() {
           <tr id="review-row-${id}" style="display:none;">
             <td colspan="8"><div id="review-note-${id}" class="review-note"></div></td>
           </tr>`;
-        }).join("")}
-      </tbody>
+  };
+
+  const groupHtml = groups.map(g => {
+    const pageName = g.source_url.split("/").filter(Boolean).pop()
+      .replace(/-/g, " ");
+    const plural = g.rows.length === 1 ? "proposed link" : "proposed links";
+    return `
+      <tr class="group-header-row">
+        <td colspan="8" style="background:#f3f4f6; font-weight:700; padding:10px 12px;">
+          <a href="${g.source_url}" target="_blank" rel="noopener" style="color:inherit;">${pageName}</a>
+          — ${g.rows.length} ${plural} from this page
+        </td>
+      </tr>
+      ${g.rows.map(renderRow).join("")}
+    `;
+  }).join("");
+
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr><th>From Page</th><th>Should Link To</th><th>Anchor Text</th>
+            <th>Relationship</th><th>Where It Goes</th><th>Score</th><th>Status</th><th>Review</th></tr>
+      </thead>
+      <tbody>${groupHtml}</tbody>
     </table>
-    <p class="panel-note">Showing ${queue.recommendations.length} of ${queue.total} matching recommendations (${stats.total} overall). `
+    <p class="panel-note">Showing ${queue.recommendations.length} of ${queue.total} matching recommendations (${stats.total} overall), `
+      + `grouped into ${groups.length} source page(s) so every link from the same page is together. `
       + `Italic text is the exact sentence the link belongs in on the source page. `
       + `Click "Explain" to see why a link is suggested in plain English, then approve or reject it. `
       + `Nothing is applied to the live site automatically.</p>
