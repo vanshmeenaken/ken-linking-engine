@@ -45,9 +45,9 @@ from agents.agent_9_section_purpose import (EXCLUDED_PLACEMENT_PURPOSES,
                                             classify_heading)
 from agents.agent_10_seo_validation import SEOValidationAgent
 from analysis.anchor_text import pick_anchor_for_context
-from analysis.contextual_placement import (best_placement, best_placement_semantic,
-                                          fetch_sections, subject_text,
-                                          target_keywords)
+from analysis.contextual_placement import (_normalise_sentence, best_placement,
+                                          best_placement_semantic, fetch_sections,
+                                          subject_text, target_keywords)
 from analysis.sentence_composer import compose_link_sentence
 from analysis.vector_store import VectorStore
 
@@ -185,6 +185,25 @@ def main(argv=None) -> int:
     updates = []
     contextual = weak_paragraphs = related = 0
     by_method = {"vector": 0, "keyword": 0}
+    # Two links from the SAME source page must never land in the identical
+    # sentence - reusing one sentence for two different targets reads as
+    # duplicated spam on the live page. recs is ordered by source_node_id
+    # then link_score DESC, so the stronger link claims a sentence first and
+    # weaker ones from the same page are pushed to their next-best DISTINCT
+    # sentence (or a distinct weak match, never the same one twice).
+    # Seeded with sentences already claimed by APPROVED/deployed contextual
+    # links per source, so a pending sibling steers away from those too -
+    # this script never touches an approved row's placement, but a pending
+    # row re-placed without this seed would still collide with it.
+    used_sentences: dict[str, set[str]] = {}
+    for row in conn.execute(
+            """SELECT source_node_id, suggested_sentence
+               FROM link_recommendations
+               WHERE status IN ('approved', 'deployed')
+                 AND placement_type = 'contextual_body'
+                 AND suggested_sentence IS NOT NULL"""):
+        used_sentences.setdefault(row["source_node_id"], set()).add(
+            _normalise_sentence(row["suggested_sentence"]))
     for r in recs:
         nid = r["source_node_id"]
         if nid in unresolved_sources:
@@ -204,11 +223,13 @@ def main(argv=None) -> int:
             continue
         page_paras = placeable.get(nid, [])
         query = subject_text(r["t_market"], r["t_title"])
-        placed = best_placement_semantic(page_paras, query)
+        claimed = used_sentences.setdefault(nid, set())
+        placed = best_placement_semantic(page_paras, query,
+                                         exclude_sentences=claimed)
         method = "vector"
         if placed is None:
             kws = target_keywords(r["t_market"], r["t_country"], r["t_region"], r["t_title"])
-            placed = best_placement(page_paras, kws)
+            placed = best_placement(page_paras, kws, exclude_sentences=claimed)
             method = "keyword"
         if placed:
             # tag the REAL section the matched paragraph sits under; the old
@@ -228,7 +249,8 @@ def main(argv=None) -> int:
             # name the best AVAILABLE paragraph instead - honestly labelled
             # as a weak match for the editor to judge. Related-block survives
             # only for pages with no usable paragraphs at all.
-            weak = best_placement_semantic(page_paras, query, min_score=0.0)
+            weak = best_placement_semantic(page_paras, query, min_score=0.0,
+                                           exclude_sentences=claimed)
             if weak:
                 # suggested_sentence = the existing line the placement anchors
                 # to; proposed_sentence (set below, after anchors rotate) = a
@@ -251,6 +273,8 @@ def main(argv=None) -> int:
                     None)
                 section = real_related or "Related Reports"
                 related += 1
+        if sentence:
+            claimed.add(_normalise_sentence(sentence))
         updates.append({"id": r["recommendation_id"], "source": nid,
                         "target": r["target_node_id"],
                         "relationship_type": r["relationship_type"],

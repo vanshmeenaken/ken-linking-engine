@@ -216,8 +216,13 @@ def _split_sentences(paragraph: str) -> list[str]:
     return [s.strip() for s in parts if len(s.strip()) > 30]
 
 
+def _normalise_sentence(sentence: str) -> str:
+    return re.sub(r"\s+", " ", (sentence or "").strip().lower())
+
+
 def best_placement_semantic(paragraphs: list[str], query_text: str,
-                            min_score: float = 0.12) -> dict | None:
+                            min_score: float = 0.12,
+                            exclude_sentences: set[str] | None = None) -> dict | None:
     """Vector-search based placement: rank a page's paragraphs by cosine
     similarity to the target's subject text (geography-stripped, so a match
     can only come from shared subject) and return the closest one.
@@ -228,33 +233,53 @@ def best_placement_semantic(paragraphs: list[str], query_text: str,
     The interface is identical to the whole-catalogue case in
     analysis/vector_store.py; only the item count differs.
 
+    `exclude_sentences` (normalised via _normalise_sentence) skips candidates
+    already chosen for another link from the same source page in this run -
+    a thin page's single best sentence would otherwise get picked for every
+    link pointing anywhere near its subject, which reads as duplicated
+    spam once two different targets sit in the identical sentence. The
+    search widens (top_k grows) until a genuinely distinct sentence clears
+    min_score, or none does.
+
     Returns {paragraph_index, sentence, score, method:'vector'}, or None if
     nothing clears min_score (the caller should then try the stricter keyword
     method, and failing that, route the link to the related-block).
     """
     if not paragraphs or not query_text.strip():
         return None
+    exclude_sentences = exclude_sentences or set()
     store = VectorStore.fit([(str(i), p) for i, p in enumerate(paragraphs)])
-    results = store.search(query_text, top_k=1)
-    if not results or results[0].score < min_score:
-        return None
-    idx = int(results[0].item_id)
-    para = paragraphs[idx]
-    sentences = _split_sentences(para) or [para]
     q_tokens = _tokens(query_text)
-    sentence = max(sentences, key=lambda s: len(_tokens(s) & q_tokens))
-    return {"paragraph_index": idx, "sentence": sentence[:300],
-            "score": round(results[0].score, 4), "method": "vector"}
+    top_k = min(len(paragraphs), 5)
+    while True:
+        results = store.search(query_text, top_k=top_k)
+        for r in results:
+            if r.score < min_score:
+                return None
+            idx = int(r.item_id)
+            para = paragraphs[idx]
+            sentences = _split_sentences(para) or [para]
+            sentence = max(sentences, key=lambda s: len(_tokens(s) & q_tokens))
+            if _normalise_sentence(sentence) in exclude_sentences:
+                continue
+            return {"paragraph_index": idx, "sentence": sentence[:300],
+                    "score": round(r.score, 4), "method": "vector"}
+        if top_k >= len(paragraphs):
+            return None  # every candidate was excluded or below threshold
+        top_k = len(paragraphs)
 
 
-def best_placement(paragraphs: list[str], keywords: set[str]) -> dict | None:
+def best_placement(paragraphs: list[str], keywords: set[str],
+                   exclude_sentences: set[str] | None = None) -> dict | None:
     """Find the paragraph/sentence most relevant to `keywords`.
 
     Returns {paragraph_index, sentence, score} for the best match at or above
     the threshold, or None when nothing is genuinely relevant (route to the
-    related block instead).
+    related block instead). `exclude_sentences` skips sentences already
+    claimed by another link from the same source - see best_placement_semantic.
     """
-    best = None
+    exclude_sentences = exclude_sentences or set()
+    candidates = []
     for i, para in enumerate(paragraphs):
         overlap = _tokens(para) & keywords
         score = len(overlap)
@@ -264,7 +289,10 @@ def best_placement(paragraphs: list[str], keywords: set[str]) -> dict | None:
         # most target keywords (the natural spot for the link)
         sentences = _split_sentences(para) or [para]
         sentence = max(sentences, key=lambda s: len(_tokens(s) & keywords))
-        if best is None or score > best["score"]:
-            best = {"paragraph_index": i, "sentence": sentence[:300],
-                    "score": score, "matched": sorted(overlap)}
-    return best
+        if _normalise_sentence(sentence) in exclude_sentences:
+            continue
+        candidates.append({"paragraph_index": i, "sentence": sentence[:300],
+                           "score": score, "matched": sorted(overlap)})
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: c["score"])

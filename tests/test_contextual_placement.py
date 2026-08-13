@@ -191,3 +191,51 @@ def test_recommendations_have_placement_and_varied_anchors():
     assert ctx_no_sentence == 0, "a contextual link has no sentence to place it in"
     assert invalid_status == 0
     assert dup_anchor == 0, "a pending link repeats an active anchor for its target"
+
+
+# ── two links from the same source must never share a sentence ──────────────
+
+def test_semantic_exclusion_forces_a_distinct_sentence():
+    # regression: Russia's page had exactly one strong sentence, and two
+    # different targets both anchored to the literal same sentence - found
+    # via manual review of the live queue
+    paras = [
+        "The future of the Russia e-learning and skills platforms market "
+        "appears promising, driven by technological advancements and "
+        "evolving educational needs across the region.",
+        "Investment in the e-learning and skills platforms market continues "
+        "to grow as employers fund digital reskilling programs broadly.",
+    ]
+    first = best_placement_semantic(paras, "South Africa E-Learning Market")
+    assert first is not None
+    used = {first["sentence"].strip().lower()}
+    second = best_placement_semantic(
+        paras, "South Africa E-Learning and Skills Platforms Market",
+        exclude_sentences=used)
+    assert second is not None
+    assert second["sentence"] != first["sentence"]
+
+
+def test_semantic_exclusion_returns_none_when_only_one_sentence_exists():
+    paras = ["The future of the market appears promising for e-learning "
+            "platforms across the region this year."]
+    first = best_placement_semantic(paras, "E-Learning Market")
+    used = {first["sentence"].strip().lower()}
+    second = best_placement_semantic(paras, "E-Learning Market",
+                                     exclude_sentences=used)
+    assert second is None  # nothing distinct left - caller falls through
+
+
+def test_keyword_exclusion_forces_a_distinct_sentence():
+    paras = [
+        "The car rental market benefits from rising tourism and business "
+        "travel across major metropolitan hubs this year.",
+        "Fleet electrification in the car rental market accelerates as "
+        "operators respond to corporate sustainability mandates broadly.",
+    ]
+    kw = {"car", "rental"}
+    first = best_placement(paras, kw)
+    used = {first["sentence"].strip().lower()}
+    second = best_placement(paras, kw, exclude_sentences=used)
+    assert second is not None
+    assert second["sentence"] != first["sentence"]
