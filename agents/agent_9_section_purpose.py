@@ -74,7 +74,16 @@ _PURPOSE_KEYWORDS = [
                            "industry analysis")),
     ("audience", ("target audience", "stakeholder", "who should")),
     ("scope", ("scope",)),
-    ("overview", ("overview", "market summary", "about the report",
+    # "About the Report" is its OWN purpose, not "overview": on shorter
+    # report templates it is the page's entire body (segmentation, players,
+    # regional notes - real varied prose), not a restatement of the report's
+    # headline numbers. Bundling it under "overview" banned cross-report
+    # links from the ONLY content section 50 short-template pages have,
+    # collapsing most of them to the Related Reports fallback - the opposite
+    # of the 2026-08-13 editorial intent. Checked BEFORE "overview" so its
+    # keyword ("about the report") is claimed here first.
+    ("about_report", ("about the report",)),
+    ("overview", ("overview", "market summary",
                   "executive summary", "introduction", "conclusion",
                   "insight")),
 ]
@@ -95,13 +104,37 @@ EXCLUDED_PLACEMENT_PURPOSES = {
     "audience", "scope", "author",
 }
 
+# Cross-report links (Agent 6/scripts 22-26: pointing THIS page at a
+# DIFFERENT market's report) must never land in the page's own opening hero
+# stat or its Market Overview - those exist to state THIS report's own
+# numbers, not to send the reader elsewhere. Found via manual review: a
+# link to Russia's e-learning report was about to sit in South Africa's very
+# first sentence ("...worth USD 1.2 billion in 2025..."), and its stored
+# "Related Markets" label was a synthetic fallback - the sentence has no
+# real heading at all, it is the pre-heading intro paragraph.
+#
+# This is intentionally SEPARATE from EXCLUDED_PLACEMENT_PURPOSES: Agent 8
+# (paragraph evidence) still needs to see intro/overview claims - that is
+# precisely where a report's headline stat lives, and Agent 8 evidencing it
+# (with a SAME-market source, gated by geography+subject) is a different,
+# legitimate use than an unrelated adjacent-market cross-link.
+NEVER_CROSS_REPORT_LINK_PURPOSES = EXCLUDED_PLACEMENT_PURPOSES | {"intro", "overview"}
+
 # purpose -> (linkable, guidance). Guidance is the PRD's "recommend
 # section-specific links / CTA by section intent" in one plain sentence.
 PURPOSE_RULES = {
-    "intro": (True, "Opening prose - a natural home for one contextual link "
-                    "to a closely related market."),
-    "overview": (True, "Prose overview - best home for contextual links to "
-                       "adjacent or regional market reports."),
+    "intro": (False, "Opening hero stat - states THIS report's own headline "
+                     "numbers. Never link to a different report here; keep "
+                     "the reader's first impression focused on this market."),
+    "overview": (False, "Market Overview - must stay about THIS report's own "
+                        "market only. Never link to a different report here "
+                        "(editorial rule, 2026-08-13); send cross-report "
+                        "links to segmentation, regional, or competitive "
+                        "sections instead."),
+    "about_report": (True, "General report body (common on shorter report "
+                           "templates, where it is the page's only real "
+                           "content) - a legitimate home for cross-report "
+                           "links, distinct from the Market Overview ban."),
     "scope": (False, "Scope definition - keep link-free."),
     "audience": (False, "Audience list - keep link-free."),
     "market_size": (True, "Data narrative - link regional versions of this "

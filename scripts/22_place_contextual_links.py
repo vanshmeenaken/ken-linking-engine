@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import uuid
 
-from agents.agent_9_section_purpose import (EXCLUDED_PLACEMENT_PURPOSES,
+from agents.agent_9_section_purpose import (NEVER_CROSS_REPORT_LINK_PURPOSES,
                                             classify_heading)
 from agents.agent_10_seo_validation import SEOValidationAgent
 from analysis.anchor_text import pick_anchor_for_context
@@ -65,12 +65,15 @@ PLACEMENT_SECTION = {  # fallback label when the matched paragraph has no headin
 
 # When no single sentence matches, recommend the page's most fitting REAL
 # section for a manual mention (Agent 9 purposes, best first per relationship).
+# "overview" is deliberately absent: Market Overview must stay about THIS
+# report's own market only (editorial rule, 2026-08-13) - cross-report links
+# go in segmentation, regional, competitive, or industry-analysis prose.
 SECTION_PREFS = {
-    "same_market": ("regional", "market_size", "overview"),
-    "global_local": ("regional", "overview", "market_size"),
-    "adjacent_market": ("industry_analysis", "overview", "segmentation"),
-    "country_region": ("regional", "overview"),
-    "report_article_support": ("industry_analysis", "overview"),
+    "same_market": ("regional", "market_size", "segmentation"),
+    "global_local": ("regional", "market_size", "segmentation"),
+    "adjacent_market": ("industry_analysis", "segmentation", "competitive"),
+    "country_region": ("regional", "market_size"),
+    "report_article_support": ("industry_analysis", "market_size"),
     "case_study_support": ("competitive", "market_size", "industry_analysis"),
 }
 
@@ -81,7 +84,7 @@ def best_section_for(sections: list[dict], relationship_type: str) -> str | None
     Only sections with actual prose (paragraphs) qualify - recommending an
     empty section would be as dishonest as forcing a sentence.
     """
-    prefs = SECTION_PREFS.get(relationship_type, ("overview",))
+    prefs = SECTION_PREFS.get(relationship_type, ("segmentation",))
     for wanted in prefs:
         for sec in sections:
             if sec["purpose"] == wanted and sec["n_paras"] > 0 and sec["heading"]:
@@ -158,11 +161,12 @@ def main(argv=None) -> int:
             page_sections[nid] = [
                 {"heading": s["heading"], "purpose": classify_heading(s["heading"]),
                  "n_paras": len(s["paragraphs"])} for s in sections]
-            # contextual links may only be placed in content sections - never
-            # in author bios, FAQs, TOCs, CTAs and similar structural areas
+            # cross-report links may only be placed in content sections -
+            # never in author bios, FAQs, TOCs, CTAs, the opening hero stat,
+            # or Market Overview (those must stay focused on THIS report)
             placeable[nid], placeable_heading[nid] = [], []
             for s in sections:
-                if classify_heading(s["heading"]) in EXCLUDED_PLACEMENT_PURPOSES:
+                if classify_heading(s["heading"]) in NEVER_CROSS_REPORT_LINK_PURPOSES:
                     continue
                 for p in s["paragraphs"]:
                     placeable[nid].append(p)

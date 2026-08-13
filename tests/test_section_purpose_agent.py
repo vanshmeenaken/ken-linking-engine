@@ -131,8 +131,8 @@ def _sec(heading, n_paras=1, links=0, order=0):
 def test_flags_purposeless_and_missing_links():
     records = build_section_records("n1", "https://x/p", [
         _sec("Mystery Heading Nobody Understands", n_paras=0),   # purposeless
-        _sec("Market Overview", n_paras=3, links=0, order=1),    # missing links
-        _sec("Market Overview", n_paras=3, links=2, order=2),    # fine
+        _sec("Regional Analysis", n_paras=3, links=0, order=1),  # missing links
+        _sec("Regional Analysis", n_paras=3, links=2, order=2),  # fine
         _sec("CHAPTER 2 - SCOPE", n_paras=0, order=3),           # banner: no flag
     ])
     assert records[0].flag_purposeless is True
@@ -141,28 +141,70 @@ def test_flags_purposeless_and_missing_links():
     assert records[3].flag_purposeless is False
 
 
+def test_intro_and_overview_are_not_linkable():
+    # editorial rule (2026-08-13): these must never be flagged as needing
+    # links, since cross-report links are barred from them
+    from agents.agent_9_section_purpose import PURPOSE_RULES
+    assert PURPOSE_RULES["intro"][0] is False
+    assert PURPOSE_RULES["overview"][0] is False
+
+
 # ── the placement guard in scripts/22 ────────────────────────────────────────
 
 def test_structural_purposes_are_excluded_from_contextual_placement():
+    from agents.agent_9_section_purpose import EXCLUDED_PLACEMENT_PURPOSES
     for purpose in ("faq", "author", "cta", "toc", "methodology",
                     "chapter_banner", "navigation"):
-        assert purpose in place_mod.EXCLUDED_PLACEMENT_PURPOSES
-    # content purposes must stay allowed
+        assert purpose in EXCLUDED_PLACEMENT_PURPOSES
+    # content purposes must stay allowed for Agent 8 evidence mapping
     for purpose in ("intro", "overview", "market_size", "regional",
                     "case_study", "other"):
-        assert purpose not in place_mod.EXCLUDED_PLACEMENT_PURPOSES
+        assert purpose not in EXCLUDED_PLACEMENT_PURPOSES
+
+
+def test_cross_report_links_never_use_intro_or_overview():
+    # editorial rule (2026-08-13): a report's opening hero stat and its
+    # Market Overview section must stay about THIS report's own market -
+    # cross-report links (scripts/22) are barred from both, even though
+    # Agent 8's evidence mapping (a different concern) still allows them
+    assert "intro" in place_mod.NEVER_CROSS_REPORT_LINK_PURPOSES
+    assert "overview" in place_mod.NEVER_CROSS_REPORT_LINK_PURPOSES
+    for purpose in ("faq", "author", "cta", "toc", "methodology",
+                    "chapter_banner", "navigation"):
+        assert purpose in place_mod.NEVER_CROSS_REPORT_LINK_PURPOSES
+    for purpose in ("market_size", "regional", "segmentation",
+                    "competitive", "case_study", "industry_analysis"):
+        assert purpose not in place_mod.NEVER_CROSS_REPORT_LINK_PURPOSES
+    # "About the Report" is NOT the same as "Market Overview": on shorter
+    # report templates it is the page's only real content section, so it
+    # must stay allowed even though it shares the "overview" ban's spirit
+    # of being a general summary area - regression: banning it collapsed
+    # 50 of 61 affected links to the Related Reports fallback
+    assert "about_report" not in place_mod.NEVER_CROSS_REPORT_LINK_PURPOSES
+
+
+def test_about_the_report_is_its_own_purpose_distinct_from_overview():
+    assert classify_heading("About the Report") == "about_report"
+    assert classify_heading("Market Overview") == "overview"
+    assert classify_heading("Executive Summary") == "overview"
 
 
 def test_best_section_for_prefers_relationship_fit():
     sections = [
-        {"heading": "Market Overview", "purpose": "overview", "n_paras": 3},
         {"heading": "Regional Analysis", "purpose": "regional", "n_paras": 2},
+        {"heading": "Segmentation", "purpose": "segmentation", "n_paras": 3},
         {"heading": "FAQs", "purpose": "faq", "n_paras": 4},
     ]
     # a same-market link belongs in the regional section first
     assert place_mod.best_section_for(sections, "same_market") == "Regional Analysis"
-    # an adjacent-market link prefers analysis/overview
-    assert place_mod.best_section_for(sections, "adjacent_market") == "Market Overview"
+    # an adjacent-market link prefers industry analysis, then segmentation
+    assert place_mod.best_section_for(sections, "adjacent_market") == "Segmentation"
+
+
+def test_best_section_for_never_recommends_overview():
+    # even as a last-resort fallback label, Overview must never be suggested
+    sections = [{"heading": "Market Overview", "purpose": "overview", "n_paras": 5}]
+    assert place_mod.best_section_for(sections, "same_market") is None
 
 
 def test_best_section_for_never_recommends_empty_sections():
@@ -193,15 +235,55 @@ def test_unresolved_placements_are_honest():
     # empty catalogue shell with no usable body text). What must NEVER exist
     # is an unresolved row still presenting a suggested sentence as if its
     # placement were confirmed - that is exactly the dishonesty the
-    # placement_status field was added to prevent.
+    # placement_status field was added to prevent. Note: an unresolved row
+    # MAY still carry a previously-confirmed sentence (a transient re-crawl
+    # failure preserves the last known-good placement rather than discarding
+    # it) - that is fine, because the dashboard/API only ever display a
+    # sentence for status='confirmed' rows (see toggleReviewNote /
+    # placementPending in dashboard/index.html). The real invariant is that
+    # a CONFIRMED contextual_body row must never be missing its sentence.
     conn = sqlite3.connect("ken_links.db")
     dishonest = conn.execute(
         "SELECT COUNT(*) FROM link_recommendations "
-        "WHERE placement_status = 'unresolved' "
-        "AND suggested_sentence IS NOT NULL").fetchone()[0]
+        "WHERE placement_status = 'confirmed' "
+        "AND placement_type = 'contextual_body' "
+        "AND (suggested_sentence IS NULL OR suggested_sentence = '')"
+    ).fetchone()[0]
     stuck_planned = conn.execute(
         "SELECT COUNT(*) FROM link_recommendations "
         "WHERE status='pending' AND placement_status = 'planned'").fetchone()[0]
     conn.close()
     assert dishonest == 0
     assert stuck_planned == 0  # every pending row got a placement pass
+
+
+def test_no_pending_cross_report_link_sits_in_intro_or_overview():
+    # regression: 92 active links were found sitting in the opening hero
+    # paragraph or a real Market Overview/About-the-Report-misclassified
+    # section. PENDING rows are auto-fixable by re-running scripts/22 and
+    # must always be clean. APPROVED rows are a separate, known gap: this
+    # script never touches an approved row's placement (safety rule), so
+    # the 26 that predate this editorial rule stay flagged until Shrey
+    # explicitly decides to re-review them - not asserted here, since that
+    # decision is not this test's (or this script's) to make.
+    conn = sqlite3.connect("ken_links.db")
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT recommendation_id, source_node_id, placement_section, status
+           FROM link_recommendations
+           WHERE status != 'rejected' AND placement_type = 'contextual_body'"""
+    ).fetchall()
+    offenders = []
+    for r in rows:
+        section = conn.execute(
+            "SELECT purpose FROM section_purpose_map WHERE node_id=? AND heading=?",
+            (r["source_node_id"], r["placement_section"])).fetchone()
+        heading_is_real = section is not None
+        purpose = section["purpose"] if section else "intro"  # no real heading -> intro
+        if purpose in ("intro", "overview"):
+            offenders.append((r["recommendation_id"], r["status"], purpose,
+                              heading_is_real))
+    pending_offenders = [o for o in offenders if o[1] == "pending"]
+    conn.close()
+    assert not pending_offenders, (
+        f"pending cross-report links still in intro/overview: {pending_offenders[:5]}")
