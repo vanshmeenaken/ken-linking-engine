@@ -1383,9 +1383,32 @@ def get_page_recommendations(node_id: str):
         "SELECT * FROM report_link_plans WHERE report_node_id = ?",
         (node_id,),
     ).fetchone()
+    # link spread: are this page's outgoing links distributed across its real
+    # sections, or bunched in one place? (Agent 9's section map = the truth
+    # about which sections exist and can host links.)
+    linkable_sections = [r[0] for r in conn.execute(
+        """SELECT heading FROM section_purpose_map
+           WHERE node_id = ? AND linkable = 1 AND heading IS NOT NULL
+           ORDER BY section_order""", (node_id,))]
+    sections_used = sorted({
+        r["placement_section"] for r in outgoing
+        if r["status"] != "rejected" and r["placement_section"]})
     conn.close()
+    spread = None
+    if linkable_sections:
+        used_real = [s for s in sections_used if s in linkable_sections]
+        spread = {
+            "linkable_sections": linkable_sections,
+            "sections_used": sections_used,
+            "spread_note": (
+                f"Links sit in {len(used_real)} of "
+                f"{len(linkable_sections)} linkable sections"
+                + (f"; also: {', '.join(s for s in sections_used if s not in linkable_sections)}"
+                   if any(s not in linkable_sections for s in sections_used) else "")),
+        }
     return {**dict(page),
             "link_plan": dict(link_plan) if link_plan else None,
+            "link_spread": spread,
             "links_to_add": [dict(r) for r in outgoing],
             "links_to_receive": [dict(r) for r in incoming]}
 

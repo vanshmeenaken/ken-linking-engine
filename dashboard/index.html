@@ -891,8 +891,14 @@ async function togglePlanLinks(nodeId) {
     const incoming = data.links_to_receive.map(r =>
       linkRow(r.source_url, r.anchor_text, r.link_score, r.score_band, r.status)).join("")
       || `<div class="panel-note">None proposed.</div>`;
+    const spread = data.link_spread
+      ? `<div class="panel-note" style="margin-bottom:8px;"><strong>Spread:</strong>
+           ${data.link_spread.spread_note}
+           (sections used: ${data.link_spread.sections_used.join(", ") || "none yet"})</div>`
+      : "";
     cell.innerHTML = `
       <div class="review-note" style="text-align:left;">
+        ${spread}
         <div><strong>Outgoing (this report → others), ${data.links_to_add.length}:</strong></div>
         ${outgoing}
         <div style="margin-top:10px;"><strong>Incoming (others → this report), ${data.links_to_receive.length}:</strong></div>

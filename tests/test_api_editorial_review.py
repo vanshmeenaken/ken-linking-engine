@@ -66,3 +66,22 @@ def test_review_note_reflects_decision_status():
         refresh_report_link_plans(conn, original[3] or 'test-restore')
         conn.commit()
         conn.close()
+
+
+def test_page_recommendations_report_link_spread():
+    # the spread block tells an editor whether a page's outgoing links are
+    # distributed across its real sections or bunched in one place; it only
+    # exists for pages Agent 9 has sectioned
+    conn = sqlite3.connect("ken_links.db")
+    row = conn.execute(
+        """SELECT DISTINCT lr.source_node_id FROM link_recommendations lr
+           JOIN section_purpose_map s ON s.node_id = lr.source_node_id
+           WHERE s.linkable = 1 LIMIT 1""").fetchone()
+    conn.close()
+    assert row is not None, "run agents/agent_9_section_purpose.py first"
+    r = client.get(f"/api/pages/{row[0]}/recommendations")
+    assert r.status_code == 200
+    spread = r.json()["link_spread"]
+    assert spread is not None
+    assert spread["linkable_sections"]
+    assert "of" in spread["spread_note"]
