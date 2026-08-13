@@ -1019,6 +1019,8 @@ async function loadRecommendations() {
                  ${r.woven_sentence_source === "template" ? `
                  <div style="margin-top:3px; color:#92400e;">Template wording
                    (AI rewrite unavailable for this one) &mdash; edit freely.</div>` : ""}
+                 ${r.woven_sentence_source ? `<div style="margin-top:3px; color:var(--gray); font-size:12px;">
+                   wording: ${escapeHtml(r.woven_sentence_source)}</div>` : ""}
                </div>` : ""}`
             : r.placement_type === "best_available_paragraph" && r.proposed_sentence
             ? `<div><strong>${whereLabel}</strong></div>

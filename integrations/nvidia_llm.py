@@ -18,8 +18,21 @@ from __future__ import annotations
 import os
 import re
 
-MODEL = "meta/llama-3.3-70b-instruct"
 BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+# Tried in order. A single NVIDIA-hosted model can be queue-congested while
+# the rest of the endpoint is perfectly healthy: llama-3.3-70b timed out on
+# every request for an hour (45s+ each, no response) while llama-3.1-70b
+# answered the identical prompt in 1.6s and GET /models returned in 0.3s.
+# Diagnosing that as "the API is down" was wrong, so the model is no longer a
+# single point of failure - the first model that responds wins.
+MODELS = (
+    "meta/llama-3.1-70b-instruct",          # strongest that responds reliably
+    "meta/llama-3.3-70b-instruct",          # preferred when not congested
+    "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "meta/llama-3.1-8b-instruct",           # fast last resort
+)
+MODEL = MODELS[0]  # kept for callers/tests that reference a single model
 
 _SYSTEM_PROMPT = (
     "You rewrite ONE sentence from a market research report so it naturally "
@@ -61,7 +74,10 @@ def api_keys() -> list[str]:
 # minutes and a bulk run appears frozen with no output - which is exactly
 # what happened before this was set. One attempt, bounded wait, then the
 # caller's deterministic fallback takes over.
-REQUEST_TIMEOUT_SECONDS = 45.0
+# Kept short because MODELS is tried in order: a long timeout multiplied by
+# the model list is what makes a congested endpoint feel like a hang. A
+# healthy model answers this prompt in 1-2s, so 20s is generous.
+REQUEST_TIMEOUT_SECONDS = 20.0
 
 
 def _client(api_key: str | None = None):
@@ -85,11 +101,36 @@ def normalise_punctuation(text: str) -> str:
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
+def _restore_exact_anchor(rewritten: str, anchor: str) -> str:
+    """Repair the one anchor deviation worth repairing: an anchor containing
+    "&" comes back with "and" (or the reverse), because that is how the model
+    naturally writes prose. The anchor becomes the clickable link text, so it
+    must match the anchor bank character for character - but rejecting the
+    whole rewrite over "&" vs "and" would waste a good sentence. Any other
+    deviation is still rejected by the caller.
+    """
+    if not rewritten or not anchor or anchor in rewritten:
+        return rewritten
+    for a, b in (("&", "and"), ("and", "&")):
+        if a in anchor:
+            variant = anchor.replace(a, b)
+            if variant in rewritten:
+                return rewritten.replace(variant, anchor)
+    return rewritten
+
+
+# Digits with optional thousand separators, an optional decimal part, and an
+# optional percent sign. Deliberately does NOT swallow trailing punctuation:
+# an earlier version used \d[\d,.]*%? which captured "2031." (including the
+# full stop) from the end of a sentence, then failed to find it in a rewrite
+# that ended "...2031," - rejecting good rewrites over punctuation alone.
+_NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
+
+
 def _contains_all_numbers(original: str, rewritten: str) -> bool:
     """Every number in the original must still appear in the rewrite -
     the hard check that the model did not drop or alter a fact."""
-    original_nums = re.findall(r"\d[\d,.]*%?", original)
-    return all(n in rewritten for n in original_nums)
+    return all(n in rewritten for n in _NUMBER_RE.findall(original))
 
 
 def llm_weave_sentence(sentence: str, anchor: str,
@@ -101,24 +142,25 @@ def llm_weave_sentence(sentence: str, anchor: str,
     client = _client(api_key)
     if client is None or not sentence.strip() or not anchor.strip():
         return None
-    try:
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"Original sentence: {sentence}\n"
-                    f"Anchor phrase to weave in (verbatim): {anchor}")},
-            ],
-            max_tokens=200,
-            temperature=0.4,
-        )
-        rewritten = normalise_punctuation(
-            (resp.choices[0].message.content or "").strip().strip('"'))
-    except Exception:
-        return None
-    if not rewritten or anchor not in rewritten:
-        return None
-    if not _contains_all_numbers(sentence, rewritten):
-        return None
-    return rewritten
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": (
+            f"Original sentence: {sentence}\n"
+            f"Anchor phrase to weave in (verbatim): {anchor}")},
+    ]
+    for model in MODELS:
+        try:
+            resp = client.chat.completions.create(
+                model=model, messages=messages, max_tokens=200,
+                temperature=0.4)
+            rewritten = normalise_punctuation(
+                (resp.choices[0].message.content or "").strip().strip('"'))
+        except Exception:
+            continue  # congested or unavailable model: try the next one
+        rewritten = _restore_exact_anchor(rewritten, anchor)
+        if not rewritten or anchor not in rewritten:
+            return None  # model answered but broke the rules - do not retry
+        if not _contains_all_numbers(sentence, rewritten):
+            return None
+        return rewritten
+    return None  # every model failed; caller falls back to the template
