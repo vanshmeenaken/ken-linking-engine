@@ -68,6 +68,12 @@ def _placement_sentence(rec: dict) -> str:
     if rec["placement_type"] == "contextual_body" and rec.get("suggested_sentence"):
         return (f'Inside the existing "{rec.get("placement_section", "body")}" '
                 f'text, in the sentence: "{rec["suggested_sentence"]}"')
+    if rec["placement_type"] == "best_available_paragraph" and rec.get("suggested_sentence"):
+        return (f'In the "{rec.get("placement_section", "body")}" section, in '
+                f'the best available paragraph: "{rec["suggested_sentence"]}" '
+                '(no sentence on the page strongly covers the target - this '
+                'is the closest one, so judge whether the link reads '
+                'naturally there)')
     if rec["placement_type"] == "section_block":
         return (f'In the page\'s real "{rec.get("placement_section", "body")}" '
                 'section (no single sentence stood out, so add it as a natural '
@@ -117,6 +123,17 @@ def _placement_reason(rec: dict, target_title: str) -> str:
         return (f'This sentence was the closest topical match to the target '
                 f'in the whole "{section}" text. Verify the fit when '
                 f'approving - no single strong shared term stood out.')
+    if rec["placement_type"] == "best_available_paragraph" and sentence:
+        target_subject = subject_text(rec.get("anchor_text", ""), target_title)
+        shared = sorted(_tokens(sentence) & _tokens(target_subject))
+        overlap = (", ".join(f'"{w}"' for w in shared[:5])
+                   if shared else "no strong shared subject terms")
+        return (f'No sentence on this page strongly covers the target\'s '
+                f'subject, so this is the CLOSEST available paragraph '
+                f'({overlap}). Approve only if the link reads naturally '
+                f'here; otherwise reject - the generic Related Reports '
+                f'block is not used as a default because that section may '
+                f'be removed from the site.')
     if rec["placement_type"] == "section_block":
         return (f'No single sentence on the page matched the target strongly '
                 f'enough to embed the link honestly. The "{section}" section '

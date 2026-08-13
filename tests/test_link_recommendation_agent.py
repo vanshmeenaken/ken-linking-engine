@@ -79,21 +79,26 @@ def test_no_double_market_in_stored_anchors():
 
 
 def test_adjacent_report_recommendations_are_included():
-    # Adjacent/related report links belong in Related Reports blocks even when
-    # they do not share the exact same market or geography.
+    # Adjacent/related report links must exist between reports that do not
+    # share the exact same market or geography. Placement is deliberately NOT
+    # pinned to related_reports_block anymore: per editorial direction the
+    # generic block is a last resort (the site may remove that section), so
+    # adjacent links now land in real sentences or the best available
+    # paragraph whenever the page's own prose allows it.
     conn = sqlite3.connect("ken_links.db")
-    count = conn.execute(
-        """SELECT COUNT(*)
+    placements = dict(conn.execute(
+        """SELECT lr.placement_type, COUNT(*)
            FROM link_recommendations lr
            JOIN content_nodes s ON s.node_id = lr.source_node_id
            JOIN content_nodes t ON t.node_id = lr.target_node_id
            WHERE lr.relationship_type = 'adjacent_market'
              AND s.content_type = 'report'
              AND t.content_type = 'report'
-             AND lr.placement_type = 'related_reports_block'"""
-    ).fetchone()[0]
+           GROUP BY lr.placement_type""").fetchall())
     conn.close()
-    assert count >= 10
+    assert sum(placements.values()) >= 10
+    # every adjacent link has a concrete placement type
+    assert all(p for p in placements)
 
 
 def test_adjacent_recommendations_pass_market_technology_gate():

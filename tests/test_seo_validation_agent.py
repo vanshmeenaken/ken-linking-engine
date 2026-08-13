@@ -181,7 +181,8 @@ def test_agent6_placement_vocabulary_not_flagged_unknown(tmp_path):
         {"node_id": "s", "url": "https://x/s"},
         {"node_id": "t", "url": "https://x/t"},
     ])
-    for placement in ("contextual_body", "related_reports_block", "hub_link"):
+    for placement in ("contextual_body", "related_reports_block", "hub_link",
+                      "section_block", "best_available_paragraph"):
         r = agent.validate("s", "t", "India Online Grocery Market", placement=placement)
         assert not any(f.rule == "unknown_placement_type" for f in r.risk_flags), (
             f"placement '{placement}' incorrectly flagged as unknown")

@@ -995,6 +995,15 @@ async function loadRecommendations() {
                <div class="panel-note" style="margin-top:4px; font-style:italic;">
                  "...${escapeHtml(r.suggested_sentence)}..."
                </div>`
+            : r.placement_type === "best_available_paragraph" && r.suggested_sentence
+            ? `<div><strong>${whereLabel}</strong></div>
+               <div class="panel-note" style="margin-top:4px; font-style:italic;">
+                 "...${escapeHtml(r.suggested_sentence)}..."
+               </div>
+               <div class="panel-note" style="margin-top:4px; color:#92400e;">
+                 Closest available paragraph — weak match, judge whether the
+                 link reads naturally here.
+               </div>`
             : r.placement_type === "section_block"
             ? `<div><strong>${whereLabel}</strong></div>
                <div class="panel-note" style="margin-top:4px;">

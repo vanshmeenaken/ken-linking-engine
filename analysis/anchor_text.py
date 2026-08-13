@@ -26,11 +26,18 @@ def format_geo(country: str) -> str:
                     for w in (country or "").split())
 
 
+# Junk placeholder values that must never reach an anchor. Ken's source data
+# carried a pandas NaN for four pages as the literal string "nan", which
+# produced the anchor "Philippines nan Market" before this guard existed.
+_JUNK_MARKETS = {"nan", "none", "null", "n/a", "na", "nan market"}
+
+
 def with_market_suffix(market: str) -> str:
     """Append ' Market' only if the value does not already end in it, so we
-    never produce '... Market Market'."""
+    never produce '... Market Market'. Placeholder junk ("nan", "none")
+    counts as empty."""
     market = (market or "").strip()
-    if not market:
+    if not market or market.lower() in _JUNK_MARKETS:
         return ""
     return market if market.lower().endswith("market") else f"{market} Market"
 

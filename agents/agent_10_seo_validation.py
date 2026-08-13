@@ -79,6 +79,7 @@ FACETED_PATH_HINTS = ("/search", "/filter", "/sort")
 # are the same thing; likewise related_report_module / related_reports_block.
 PLACEMENT_PRIORITY = [
     "body_paragraph", "contextual_body",
+    "best_available_paragraph",  # weak match, honestly labelled for review
     "section_block", "hub_link",
     "related_report_module", "related_reports_block",
     "evidence_block", "toc_section", "sidebar", "footer",

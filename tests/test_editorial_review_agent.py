@@ -148,3 +148,16 @@ def test_every_real_recommendation_gets_a_placement_reason():
         note = build_review_note(dict(row), s, t)
         assert note.placement_reason, f"no placement reason: {row['recommendation_id']}"
     conn.close()
+
+
+def test_best_available_paragraph_note_is_candid():
+    # when no sentence strongly matches, the note must say this is only the
+    # CLOSEST paragraph and tell the editor to judge the fit - never dress a
+    # weak match up as a strong one
+    note = build_review_note(_rec(
+        placement_type="best_available_paragraph",
+        suggested_sentence="General market conditions continue to evolve "
+                           "across the region's key sectors."),
+        "Source", "Target Cold Storage Market")
+    assert "closest" in note.placement_reason.lower()
+    assert "best available paragraph" in note.where.lower()

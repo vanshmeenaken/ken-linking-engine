@@ -182,7 +182,7 @@ def main(argv=None) -> int:
 
     # ── decide placement per recommendation: vector first, keyword fallback ──
     updates = []
-    contextual = section_blocks = related = 0
+    contextual = weak_paragraphs = related = 0
     by_method = {"vector": 0, "keyword": 0}
     for r in recs:
         nid = r["source_node_id"]
@@ -222,13 +222,22 @@ def main(argv=None) -> int:
             contextual += 1
             by_method[method] += 1
         else:
-            # no genuine sentence: recommend the page's best REAL section for
-            # a manual mention before surrendering to the generic end block
-            sec_heading = best_section_for(
-                page_sections.get(nid, []), r["relationship_type"])
-            if sec_heading:
-                ptype, sentence, section = "section_block", None, sec_heading
-                section_blocks += 1
+            # No STRONG sentence match. The generic Related Reports block is
+            # not an acceptable default (the site may drop that section), so
+            # name the best AVAILABLE paragraph instead - honestly labelled
+            # as a weak match for the editor to judge. Related-block survives
+            # only for pages with no usable paragraphs at all.
+            weak = best_placement_semantic(page_paras, query, min_score=0.0)
+            if weak:
+                ptype, sentence = "best_available_paragraph", weak["sentence"]
+                headings = placeable_heading.get(nid, [])
+                idx = weak["paragraph_index"]
+                real = headings[idx] if idx < len(headings) else None
+                section = real or best_section_for(
+                    page_sections.get(nid, []), r["relationship_type"]) \
+                    or PLACEMENT_SECTION.get(r["relationship_type"],
+                                             "Market Overview")
+                weak_paragraphs += 1
             else:
                 ptype, sentence = "related_reports_block", None
                 real_related = next(
@@ -286,7 +295,7 @@ def main(argv=None) -> int:
     print(f"Contextual placements (in body): {contextual}")
     print(f"  via vector search  : {by_method['vector']}")
     print(f"  via keyword fallback: {by_method['keyword']}")
-    print(f"Recommended real section (manual): {section_blocks}")
+    print(f"Best-available paragraph (weak match): {weak_paragraphs}")
     print(f"Routed to Related Reports block : {related}")
     print(f"Placement unresolved (crawl/body): {len(unresolved_sources)} source pages")
     print(f"Anchors rotated from bank       : {anchor_assigned}")
