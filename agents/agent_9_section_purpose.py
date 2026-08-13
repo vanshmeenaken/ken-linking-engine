@@ -84,6 +84,17 @@ _PURPOSE_KEYWORDS = [
 # report headings) so they sit outside the keyword loop.
 _CASE_STUDY_EXACT = {"why", "who", "where", "when", "what", "how"}
 
+# Sections whose paragraphs must never HOST a contextual or evidence link,
+# even when a sentence there matches well: structural/meta content (found via
+# manual review - an author bio's "we support OEMs with data-driven analysis"
+# vector-matched a cement-market target, and an FAQ answer matched a laundry
+# target despite the FAQ-stays-link-free rule). Shared by contextual
+# placement (scripts/22) and Agent 8 evidence mapping.
+EXCLUDED_PLACEMENT_PURPOSES = {
+    "toc", "methodology", "faq", "cta", "chapter_banner", "navigation",
+    "audience", "scope", "author",
+}
+
 # purpose -> (linkable, guidance). Guidance is the PRD's "recommend
 # section-specific links / CTA by section intent" in one plain sentence.
 PURPOSE_RULES = {

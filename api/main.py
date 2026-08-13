@@ -1390,6 +1390,81 @@ def get_page_recommendations(node_id: str):
             "links_to_receive": [dict(r) for r in incoming]}
 
 
+# ── 38. Paragraph evidence (Agent 8) ─────────────────────────────────────────
+
+@app.get("/api/evidence/stats")
+def get_evidence_stats():
+    """Summary of Agent 8's paragraph evidence map: how many market claims
+    exist, how many are unsupported, and the pages with the most unsupported
+    claims (the pages an editor should look at first)."""
+    conn = get_db()
+    total = conn.execute(
+        "SELECT COUNT(*) FROM paragraph_evidence_map").fetchone()[0]
+    claims = {row[0]: row[1] for row in conn.execute(
+        """SELECT support_status, COUNT(*) FROM paragraph_evidence_map
+           WHERE classification = 'market_claim'
+           GROUP BY support_status""")}
+    with_evidence = conn.execute(
+        """SELECT COUNT(*) FROM paragraph_evidence_map
+           WHERE evidence_target_node_id IS NOT NULL""").fetchone()[0]
+    pages_mapped = conn.execute(
+        "SELECT COUNT(DISTINCT node_id) FROM paragraph_evidence_map"
+    ).fetchone()[0]
+    top_unsupported = conn.execute(
+        """SELECT e.node_id, e.url, n.title,
+                  COUNT(*) AS unsupported_claims,
+                  SUM(CASE WHEN e.evidence_target_node_id IS NOT NULL
+                      THEN 1 ELSE 0 END) AS with_evidence_found
+           FROM paragraph_evidence_map e
+           JOIN content_nodes n ON n.node_id = e.node_id
+           WHERE e.classification = 'market_claim'
+             AND e.support_status = 'unsupported'
+           GROUP BY e.node_id ORDER BY unsupported_claims DESC
+           LIMIT 10""").fetchall()
+    conn.close()
+    return {
+        "pages_mapped": pages_mapped,
+        "paragraphs_mapped": total,
+        "market_claims": sum(claims.values()),
+        "claims_by_support": claims,
+        "evidence_links_found": with_evidence,
+        "top_pages_with_unsupported_claims": [dict(r) for r in top_unsupported],
+    }
+
+
+@app.get("/api/pages/{node_id}/evidence")
+def get_page_evidence(node_id: str):
+    """Agent 8's paragraph evidence map for one page: every meaningful
+    paragraph, whether it makes a market claim, whether that claim is
+    supported by a link, and the best evidence page found for unsupported
+    claims. 404 if the page is unknown; empty if the page has not been
+    mapped yet."""
+    conn = get_db()
+    page = conn.execute(
+        "SELECT node_id, url, title FROM content_nodes WHERE node_id = ?",
+        (node_id,)).fetchone()
+    if page is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Page '{node_id}' not found")
+    rows = conn.execute(
+        """SELECT section_heading, section_purpose, paragraph_index,
+                  paragraph_text, classification, has_numeric_claim,
+                  support_status, evidence_target_url, evidence_type,
+                  evidence_score
+           FROM paragraph_evidence_map WHERE node_id = ?
+           ORDER BY paragraph_index""", (node_id,)).fetchall()
+    conn.close()
+    paragraphs = [dict(r) for r in rows]
+    claims = [p for p in paragraphs if p["classification"] == "market_claim"]
+    return {**dict(page),
+            "mapped": bool(paragraphs),
+            "paragraph_count": len(paragraphs),
+            "claim_count": len(claims),
+            "unsupported_claims": sum(
+                1 for c in claims if c["support_status"] == "unsupported"),
+            "paragraphs": paragraphs}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Phase 2 — Google integrations (GSC / GA4)
 # ═════════════════════════════════════════════════════════════════════════════

@@ -93,16 +93,26 @@ def _is_internal_href(href: str) -> bool:
     return "kenresearch.com" in href or href.startswith("/")
 
 
+def _new_section(heading: str | None, order: int) -> dict:
+    return {"heading": heading, "order": order, "paragraphs": [],
+            "paragraph_links": [], "internal_link_count": 0,
+            "table_count": 0, "image_count": 0}
+
+
 def fetch_sections(url: str, timeout: int = 20) -> list[dict]:
     """Return the page's real section structure, in document order.
 
     Each section: {"heading": str | None, "order": int, "paragraphs": [str],
-    "internal_link_count": int}. A section starts at each <h2> (<h3> when a
-    page has no <h2> at all); paragraphs before the first heading form a
-    heading-less intro section. Paragraph filtering matches fetch_paragraphs
-    (length, boilerplate, TOC-line rules), but internal links are counted on
-    EVERY <p> in the section, filtered or not, because a link list of short
-    lines is still evidence the section already links somewhere.
+    "paragraph_links": [int], "internal_link_count": int, "table_count": int,
+    "image_count": int}. A section starts at each <h2> (<h3> when a page has
+    no <h2> at all); paragraphs before the first heading form a heading-less
+    intro section. Paragraph filtering matches fetch_paragraphs (length,
+    boilerplate, TOC-line rules); paragraph_links is aligned with paragraphs
+    and counts internal links INSIDE each kept paragraph (evidence mapping
+    needs to know whether a claim itself carries a link). internal_link_count
+    counts links anywhere in the section - a link list of short <li> lines is
+    still evidence the section links somewhere. table_count/image_count exist
+    for Agent 8's charts-tables-images check (PRD 13.8).
 
     The crawler reports the page as it is - chapter banner headings
     ("CHAPTER 4 - Market Size & Growth") and empty sections are kept, and
@@ -115,26 +125,33 @@ def fetch_sections(url: str, timeout: int = 20) -> list[dict]:
     for tag in soup(["script", "style", "nav", "header", "footer", "form"]):
         tag.decompose()
     level = "h2" if soup.find("h2") else "h3"
-    sections = [{"heading": None, "order": 0, "paragraphs": [],
-                 "internal_link_count": 0}]
+    sections = [_new_section(None, 0)]
     # walk <a> directly (not via <p>) so links in list items and divs are
     # counted too - several report templates render related-report links as
     # <li>, which a p-only walk would miss entirely
-    for el in soup.find_all([level, "p", "a"]):
+    for el in soup.find_all([level, "p", "a", "table", "img"]):
         sec = sections[-1]
         if el.name == level:
             heading = _clean(el.get_text(" ", strip=True))
             if heading:
-                sections.append({"heading": heading, "order": len(sections),
-                                 "paragraphs": [], "internal_link_count": 0})
+                sections.append(_new_section(heading, len(sections)))
             continue
         if el.name == "a":
             if el.has_attr("href") and _is_internal_href(el["href"]):
                 sec["internal_link_count"] += 1
             continue
+        if el.name == "table":
+            sec["table_count"] += 1
+            continue
+        if el.name == "img":
+            sec["image_count"] += 1
+            continue
         text = _clean(el.get_text(" ", strip=True))
         if len(text) > 60 and not is_boilerplate(text) and not is_toc_or_heading(text):
             sec["paragraphs"].append(text)
+            sec["paragraph_links"].append(sum(
+                1 for a in el.find_all("a", href=True)
+                if _is_internal_href(a["href"])))
     if not sections[0]["paragraphs"] and not sections[0]["internal_link_count"]:
         sections = sections[1:]
         for i, s in enumerate(sections):

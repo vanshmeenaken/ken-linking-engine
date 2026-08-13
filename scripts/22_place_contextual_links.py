@@ -41,7 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import uuid
 
-from agents.agent_9_section_purpose import classify_heading
+from agents.agent_9_section_purpose import (EXCLUDED_PLACEMENT_PURPOSES,
+                                            classify_heading)
 from agents.agent_10_seo_validation import SEOValidationAgent
 from analysis.contextual_placement import (best_placement, best_placement_semantic,
                                           fetch_sections, subject_text,
@@ -69,17 +70,6 @@ SECTION_PREFS = {
     "country_region": ("regional", "overview"),
     "report_article_support": ("industry_analysis", "overview"),
     "case_study_support": ("competitive", "market_size", "industry_analysis"),
-}
-
-
-# Sections whose paragraphs must never HOST a contextual link, even when a
-# sentence there matches well: structural/meta content (found via manual
-# review - an author bio's "we support OEMs with data-driven analysis"
-# vector-matched a cement-market target, and an FAQ answer matched a laundry
-# target despite Agent 9's own FAQ-stays-link-free rule).
-EXCLUDED_PLACEMENT_PURPOSES = {
-    "toc", "methodology", "faq", "cta", "chapter_banner", "navigation",
-    "audience", "scope", "author",
 }
 
 

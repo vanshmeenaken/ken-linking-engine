@@ -379,6 +379,23 @@
     <div id="rec-wrap"><div class="loading">Loading…</div></div>
   </div>
 
+  <h2 class="section-heading">Claim Evidence</h2>
+
+  <div class="stat-grid" id="evidence-grid">
+    <div class="loading">Loading evidence map…</div>
+  </div>
+
+  <div class="table-panel" style="margin-bottom:24px;">
+    <h2>Unsupported Market Claims — Pages That State Numbers Without Proof Links</h2>
+    <p class="panel-note" style="margin:0 0 12px;">
+      Every paragraph of the mapped pages was checked for market claims
+      (market sizes, CAGRs, percentages). A claim is unsupported when neither
+      the paragraph nor its section links to any evidence. Pages below have
+      the most unsupported claims — the first candidates for evidence links.
+    </p>
+    <div id="evidence-wrap"><div class="loading">Loading…</div></div>
+  </div>
+
   <h2 class="section-heading">Full Page Inventory</h2>
 
   <div class="table-panel">
@@ -1135,6 +1152,57 @@ async function loadIntegrations() {
       `works without them.`;
 }
 
+async function loadEvidence() {
+  const stats = await getJSON(`${API}/api/evidence/stats`);
+  const support = stats.claims_by_support || {};
+  document.getElementById("evidence-grid").innerHTML = `
+    <div class="stat-card">
+      <div class="label">Pages Mapped</div>
+      <div class="value">${fmt(stats.pages_mapped)}</div>
+      <div class="sub">${fmt(stats.paragraphs_mapped)} paragraphs checked</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Market Claims Found</div>
+      <div class="value">${fmt(stats.market_claims)}</div>
+      <div class="sub">sizes, CAGRs, percentages</div>
+    </div>
+    <div class="stat-card orphan">
+      <div class="label">Unsupported Claims</div>
+      <div class="value">${fmt(support.unsupported || 0)}</div>
+      <div class="sub">no proof link anywhere near them</div>
+    </div>
+    <div class="stat-card good">
+      <div class="label">Evidence Pages Found</div>
+      <div class="value">${fmt(stats.evidence_links_found)}</div>
+      <div class="sub">same subject and geography</div>
+    </div>`;
+
+  const wrap = document.getElementById("evidence-wrap");
+  const rows = stats.top_pages_with_unsupported_claims || [];
+  if (!rows.length) {
+    wrap.innerHTML = `<div class="empty-msg">No unsupported claims found. `
+      + `Run agents/agent_8_paragraph_evidence.py to map pages.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>Page</th><th>Unsupported Claims</th>
+        <th>Evidence Found</th></tr></thead>
+      <tbody>${rows.map(r => `
+        <tr>
+          <td><div class="page-title"><a href="${r.url}" target="_blank"
+            rel="noopener">${r.title || r.url.split("/").pop()}</a></div></td>
+          <td><span class="badge high">${r.unsupported_claims}</span></td>
+          <td>${r.with_evidence_found > 0
+            ? `<span class="badge low">${r.with_evidence_found} found</span>`
+            : `<span class="panel-note">none in current inventory</span>`}</td>
+        </tr>`).join("")}</tbody>
+    </table>
+    <p class="panel-note">"None in current inventory" means no report or case
+      study in the 500-page sample covers the same subject and geography —
+      honest gaps, not hidden ones. Expanding the inventory fills these.</p>`;
+}
+
 async function loadEverything() {
   await Promise.all([
     loadStats(),
@@ -1144,6 +1212,7 @@ async function loadEverything() {
     loadFixFirst(),
     loadReportPlans(),
     loadRecommendations(),
+    loadEvidence(),
     loadRelationships(),
   ]);
 }
