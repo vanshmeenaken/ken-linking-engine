@@ -102,3 +102,49 @@ def test_builds_cleanly_against_every_real_recommendation():
         assert note.plain_summary  # never empty/crashes for real data
         assert "Ken Research" not in note.headline  # branding stripped
     conn.close()
+
+
+# ── placement justification (why THIS spot, not just where) ─────────────────
+
+def test_contextual_placement_reason_names_shared_subject():
+    # the editor must see WHY the sentence is right: the actual subject
+    # words shared between the sentence and the target
+    note = build_review_note(_rec(
+        suggested_sentence="Indonesia online grocery demand is rising fast "
+                           "across urban delivery zones.",
+        anchor_text="India Online Grocery Market"),
+        "Source", "India Online Grocery Market Report")
+    assert "grocery" in note.placement_reason.lower()
+    assert "reader" in note.placement_reason.lower()
+    assert note.placement_reason in note.plain_summary
+
+
+def test_related_block_placement_reason_is_honest():
+    note = build_review_note(
+        _rec(placement_type="related_reports_block", suggested_sentence=None),
+        "Source", "Target")
+    assert "no sentence" in note.placement_reason.lower()
+    assert "honest" in note.placement_reason.lower()
+
+
+def test_section_block_placement_reason_explains_fallback():
+    note = build_review_note(
+        _rec(placement_type="section_block", suggested_sentence=None,
+             placement_section="Regional Analysis"),
+        "Source", "Target")
+    assert "Regional Analysis" in note.placement_reason
+    assert "natural mention" in note.placement_reason
+
+
+def test_every_real_recommendation_gets_a_placement_reason():
+    conn = sqlite3.connect("ken_links.db")
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM link_recommendations").fetchall()
+    for row in rows:
+        s = conn.execute("SELECT title FROM content_nodes WHERE node_id=?",
+                         (row["source_node_id"],)).fetchone()[0]
+        t = conn.execute("SELECT title FROM content_nodes WHERE node_id=?",
+                         (row["target_node_id"],)).fetchone()[0]
+        note = build_review_note(dict(row), s, t)
+        assert note.placement_reason, f"no placement reason: {row['recommendation_id']}"
+    conn.close()

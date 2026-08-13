@@ -1051,8 +1051,10 @@ function renderReviewNote(id, note) {
   const cell = document.getElementById(`review-note-${id}`);
   const decided = note.status !== "pending";
   cell.innerHTML = `
-    <div><strong>Why:</strong> ${note.why}</div>
-    <div><strong>Where:</strong> ${note.where}</div>
+    <div><strong>Why this link:</strong> ${note.why}</div>
+    <div><strong>Where it goes:</strong> ${note.where}</div>
+    <div style="background:#eef6ee; border-radius:6px; padding:6px 10px; margin:4px 0;">
+      <strong>Why this spot:</strong> ${note.placement_reason || "(not available)"}</div>
     <div><strong>Relationship:</strong> ${note.relationship}</div>
     <div><strong>SEO value:</strong> ${note.seo_value} &nbsp; <strong>Business value:</strong> ${note.business_value} &nbsp; <strong>Risk:</strong> ${note.risk}</div>
     <div style="margin-top:8px;">

@@ -19,7 +19,13 @@ Usage (library, not a CLI - called from the API):
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from analysis.contextual_placement import _tokens, subject_text
 
 # Stored titles carry site branding and formatting noise an editor doesn't
 # need in a review note, e.g. "Qatar Nordic Regulatory Affairs Market |
@@ -86,12 +92,58 @@ def _relationship_sentence(relationship_type: str, source_title: str, target_tit
                       f'These pages are related by a "{relationship_type}" connection.')
 
 
+def _placement_reason(rec: dict, target_title: str) -> str:
+    """WHY this exact spot is right - the editor's approve/reject hinges on
+    seeing the placement justified, not just named.
+
+    Deterministic and honest: for contextual placements the reason is the
+    actual subject overlap between the chosen sentence and the target (the
+    same signal that chose the spot); for section/related placements it
+    explains the fallback truthfully.
+    """
+    sentence = rec.get("suggested_sentence") or ""
+    section = rec.get("placement_section") or "body"
+    if rec["placement_type"] == "contextual_body" and sentence:
+        target_subject = subject_text(rec.get("anchor_text", ""), target_title)
+        shared = sorted(_tokens(sentence) & _tokens(target_subject))
+        if shared:
+            terms = ", ".join(f'"{w}"' for w in shared[:5])
+            return (f"This sentence already discusses {terms} - the exact "
+                    f"subject the target report covers. A reader mid-sentence "
+                    f"here is actively thinking about this topic, so the link "
+                    f"answers a question they already have. That is what makes "
+                    f"a contextual link valuable to both readers and search "
+                    f"engines, versus a generic list at the page bottom.")
+        return (f'This sentence was the closest topical match to the target '
+                f'in the whole "{section}" text. Verify the fit when '
+                f'approving - no single strong shared term stood out.')
+    if rec["placement_type"] == "section_block":
+        return (f'No single sentence on the page matched the target strongly '
+                f'enough to embed the link honestly. The "{section}" section '
+                f'is the best real home by purpose: its content type fits '
+                f'this link, so add the anchor as a natural mention anywhere '
+                f'in that section.')
+    if rec["placement_type"] == "related_reports_block":
+        return ("No sentence in the page body genuinely covers the target's "
+                "subject - forcing the link into unrelated prose would read "
+                "as spam to users and search engines. The Related Reports "
+                "area is the honest placement: readers finishing this page "
+                "get the target as a next step.")
+    if rec["placement_type"] == "hub_link":
+        return (f'This is a hub listing link: the target belongs in the '
+                f'"{section}" listing so readers can navigate down from the '
+                f'hub to it.')
+    return (f'Placed in "{section}" - review the fit manually; this '
+            f'placement type carries no automatic justification.')
+
+
 @dataclass
 class ReviewNote:
     recommendation_id: str
     headline: str
     why: str
     where: str
+    placement_reason: str
     anchor: str
     relationship: str
     seo_value: str
@@ -123,6 +175,7 @@ def build_review_note(rec: dict, source_title: str, target_title: str) -> Review
         f"{relationship}"
     )
     where = _placement_sentence(rec)
+    placement_reason = _placement_reason(rec, target_title)
 
     why = (f'Recommended with a score of {rec["link_score"]:.0f} out of 100 '
           f'({rec["score_band"]}). {relationship}')
@@ -131,7 +184,7 @@ def build_review_note(rec: dict, source_title: str, target_title: str) -> Review
                f'using the anchor "{rec["anchor_text"]}"')
 
     plain_summary = (
-        f'{headline}. {where}. '
+        f'{headline}. {where}. Why this spot: {placement_reason} '
         f'SEO value: {seo_val}. Business value: {biz_val}. {risk_val}.'
     )
     if rec.get("risk_reason"):
@@ -142,6 +195,7 @@ def build_review_note(rec: dict, source_title: str, target_title: str) -> Review
         headline=headline,
         why=why,
         where=where,
+        placement_reason=placement_reason,
         anchor=rec["anchor_text"],
         relationship=relationship,
         seo_value=seo_val,

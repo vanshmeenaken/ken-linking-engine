@@ -1343,6 +1343,7 @@ def get_recommendation_review(recommendation_id: str):
         "headline": note.headline,
         "why": note.why,
         "where": note.where,
+        "placement_reason": note.placement_reason,
         "anchor": note.anchor,
         "relationship": note.relationship,
         "seo_value": note.seo_value,
