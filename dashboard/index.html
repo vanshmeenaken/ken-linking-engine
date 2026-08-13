@@ -1004,9 +1004,15 @@ async function loadRecommendations() {
                </div>`
             : isContextual && r.suggested_sentence
             ? `<div><strong>${whereLabel}</strong></div>
-               <div class="panel-note" style="margin-top:4px; font-style:italic;">
-                 "...${escapeHtml(r.suggested_sentence)}..."
-               </div>`
+               <div class="panel-note" style="margin-top:4px;">
+                 <span style="color:var(--gray);">Original:</span>
+                 <span style="font-style:italic;">"...${escapeHtml(r.suggested_sentence)}..."</span>
+               </div>
+               ${r.woven_sentence ? `
+               <div class="panel-note" style="margin-top:4px; background:#eefbf0; border-radius:6px; padding:5px 8px;">
+                 <strong>Rewrite it to:</strong>
+                 <span style="font-style:italic;">"${escapeHtml(r.woven_sentence)}"</span>
+               </div>` : ""}`
             : r.placement_type === "best_available_paragraph" && r.proposed_sentence
             ? `<div><strong>${whereLabel}</strong></div>
                <div class="panel-note" style="margin-top:4px;">

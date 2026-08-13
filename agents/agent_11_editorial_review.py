@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from analysis.contextual_placement import _tokens, subject_text
+from analysis.sentence_composer import weave_anchor_into_sentence
 
 # Stored titles carry site branding and formatting noise an editor doesn't
 # need in a review note, e.g. "Qatar Nordic Regulatory Affairs Market |
@@ -66,8 +67,12 @@ def _risk_word(risk_flag: str | None) -> str:
 
 def _placement_sentence(rec: dict) -> str:
     if rec["placement_type"] == "contextual_body" and rec.get("suggested_sentence"):
+        woven = weave_anchor_into_sentence(
+            rec["suggested_sentence"], rec.get("anchor_text", ""),
+            rec.get("relationship_type", ""))
         return (f'Inside the existing "{rec.get("placement_section", "body")}" '
-                f'text, in the sentence: "{rec["suggested_sentence"]}"')
+                f'text. Original sentence: "{rec["suggested_sentence"]}" - '
+                f'rewrite it to: "{woven}"')
     if rec["placement_type"] == "best_available_paragraph" and rec.get("suggested_sentence"):
         if rec.get("proposed_sentence"):
             return (f'In the "{rec.get("placement_section", "body")}" section: '
@@ -180,6 +185,7 @@ class ReviewNote:
     business_value: str
     risk: str
     plain_summary: str
+    woven_sentence: str | None = None
 
 
 def build_review_note(rec: dict, source_title: str, target_title: str) -> ReviewNote:
@@ -220,6 +226,12 @@ def build_review_note(rec: dict, source_title: str, target_title: str) -> Review
     if rec.get("risk_reason"):
         plain_summary += f' Note: {rec["risk_reason"]}.'
 
+    woven_sentence = (
+        weave_anchor_into_sentence(rec["suggested_sentence"], rec["anchor_text"],
+                                   rec["relationship_type"])
+        if rec["placement_type"] == "contextual_body" and rec.get("suggested_sentence")
+        else None)
+
     return ReviewNote(
         recommendation_id=rec["recommendation_id"],
         headline=headline,
@@ -232,4 +244,5 @@ def build_review_note(rec: dict, source_title: str, target_title: str) -> Review
         business_value=biz_val,
         risk=risk_val,
         plain_summary=plain_summary,
+        woven_sentence=woven_sentence,
     )
