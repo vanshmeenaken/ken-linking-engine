@@ -173,3 +173,45 @@ def test_review_queue_has_woven_sentence_for_contextual_placements():
         assert row.get("woven_sentence"), (
             f"no woven_sentence for {row['recommendation_id']}")
         assert row["anchor_text"] in row["woven_sentence"]
+
+
+# ── the anchor must be woven IN, not bolted on ───────────────────────────────
+
+def test_no_stored_rewrite_merely_appends_to_the_original():
+    """Regression: Shrey spotted that every rewrite kept the original sentence
+    untouched and simply added a clause naming the market at the end, so all
+    124 shared one detectable shape. A rewrite must integrate the anchor into
+    the sentence (front-loaded, mid-clause, or as the subject), not restate
+    the original and trail the link behind it."""
+    import sqlite3
+    conn = sqlite3.connect("ken_links.db")
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT recommendation_id, suggested_sentence, woven_sentence
+           FROM link_recommendations WHERE woven_sentence IS NOT NULL""").fetchall()
+    conn.close()
+    assert rows, "no stored rewrites to check"
+    appended = [
+        r["recommendation_id"] for r in rows
+        if r["woven_sentence"].strip().startswith(
+            r["suggested_sentence"].strip().rstrip(".!?:; "))]
+    assert not appended, (
+        f"{len(appended)} rewrites merely append to the original: {appended[:5]}")
+
+
+def test_stored_rewrites_keep_every_number_and_the_anchor():
+    import sqlite3
+    from integrations.nvidia_llm import _NUMBER_RE
+    conn = sqlite3.connect("ken_links.db")
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT recommendation_id, anchor_text, suggested_sentence,
+                  woven_sentence FROM link_recommendations
+           WHERE woven_sentence IS NOT NULL""").fetchall()
+    conn.close()
+    for r in rows:
+        assert r["anchor_text"] in r["woven_sentence"], (
+            f'{r["recommendation_id"]}: anchor missing from rewrite')
+        lost = [n for n in _NUMBER_RE.findall(r["suggested_sentence"])
+                if n not in r["woven_sentence"]]
+        assert not lost, f'{r["recommendation_id"]}: lost numbers {lost}'

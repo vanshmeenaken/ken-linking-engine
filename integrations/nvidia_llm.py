@@ -124,7 +124,12 @@ def _restore_exact_anchor(rewritten: str, anchor: str) -> str:
 # an earlier version used \d[\d,.]*%? which captured "2031." (including the
 # full stop) from the end of a sentence, then failed to find it in a rewrite
 # that ended "...2031," - rejecting good rewrites over punctuation alone.
-_NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
+# A comma is only part of a number when digits follow it, so "2025," at the
+# end of a clause yields "2025" and not "2025,". The looser \d[\d,]* let the
+# trailing comma in, which then failed to match a rewrite that punctuated the
+# same figure differently - the same class of false negative as the trailing
+# full stop.
+_NUMBER_RE = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?%?")
 
 
 def _contains_all_numbers(original: str, rewritten: str) -> bool:
