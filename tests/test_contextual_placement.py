@@ -239,3 +239,27 @@ def test_keyword_exclusion_forces_a_distinct_sentence():
     second = best_placement(paras, kw, exclude_sentences=used)
     assert second is not None
     assert second["sentence"] != first["sentence"]
+
+
+def test_used_sentences_seeded_from_all_confirmed_not_just_approved():
+    # regression: seeding the collision-guard only from approved/deployed
+    # rows missed a partial-reopen scenario - two PENDING rows on the same
+    # source page, one left 'confirmed' from an earlier run and one
+    # reopened for re-placement, ended up sharing the exact same sentence
+    # because the reopened row never learned the confirmed sibling's spot
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "place_contextual_links",
+        Path(__file__).resolve().parent.parent / "scripts" /
+        "22_place_contextual_links.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    src = inspect_source = mod.__file__
+    import re as _re
+    text = Path(src).read_text(encoding="utf-8")
+    # the seed query must key off placement_status='confirmed', not status
+    seed_block = text[text.index("used_sentences: dict"):text.index("used_sentences: dict") + 700]
+    assert "status != 'rejected'" in seed_block
+    assert "placement_status = 'confirmed'" in seed_block
+    assert "status IN ('approved', 'deployed')" not in seed_block

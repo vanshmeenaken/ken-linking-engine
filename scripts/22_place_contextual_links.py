@@ -195,16 +195,21 @@ def main(argv=None) -> int:
     # then link_score DESC, so the stronger link claims a sentence first and
     # weaker ones from the same page are pushed to their next-best DISTINCT
     # sentence (or a distinct weak match, never the same one twice).
-    # Seeded with sentences already claimed by APPROVED/deployed contextual
-    # links per source, so a pending sibling steers away from those too -
-    # this script never touches an approved row's placement, but a pending
-    # row re-placed without this seed would still collide with it.
+    # Seeded with sentences already claimed by every ALREADY-CONFIRMED active
+    # link per source (approved/deployed, or a pending row this run is not
+    # touching) - a pending sibling being newly placed must steer away from
+    # ALL of them, not just approved ones. Regression: seeding only from
+    # approved/deployed missed the case of a PARTIAL reopen (some pending
+    # rows on a source page reopened for replacement, others left
+    # 'confirmed' from an earlier run) - a reopened row could then land on
+    # the exact sentence its still-confirmed pending sibling already used.
     used_sentences: dict[str, set[str]] = {}
     for row in conn.execute(
             """SELECT source_node_id, suggested_sentence
                FROM link_recommendations
-               WHERE status IN ('approved', 'deployed')
+               WHERE status != 'rejected'
                  AND placement_type = 'contextual_body'
+                 AND placement_status = 'confirmed'
                  AND suggested_sentence IS NOT NULL"""):
         used_sentences.setdefault(row["source_node_id"], set()).add(
             _normalise_sentence(row["suggested_sentence"]))
