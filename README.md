@@ -201,24 +201,33 @@ Full request/response examples: **[docs/API.md](docs/API.md)**.
 
 ## Current Status
 
-Phase 1 and Phase 2 are complete. Phase 3 is active. The recommendation engine now builds balanced, bidirectional report plans while retaining the market relevance (65%) and technology relevance (35%) safety gate.
+Phases 1-3 are complete apart from editorial review. Every master PRD agent
+is built except Agent 12 (Deployment - the tech team applies approved links
+manually from the CSV) and Agent 13 (Measurement - needs deployed links
+first). Agents 8 and 9 landed with the section-aware crawler; 9 of the 12
+MCP servers are live; the vector store has a real index backend.
 
 - 500 pages in the local inventory.
 - 447 entities and 2,021 page-to-entity mappings.
 - 108 relationship edges after the market/technology rebuild.
 - 135 active link recommendations (151 records including 16 retained rejections).
-- 26 recommendations approved for manual deployment.
-- 16 recommendations rejected during editorial review.
-- 109 recommendations pending editorial review.
-- 55 reciprocal recommendation pairs now implement bidirectional relationships.
+- 26 approved / 16 rejected / 109 pending editorial review.
 - 298 active reports have PRD link-plan rows; 48 project into the 10-25 link range and 250 still need qualified candidates.
-- No report exceeds 25 projected outgoing links or 30 combined opportunities.
-- 19 pending contextual placements are explicitly unresolved because the live-page crawl is blocked; confirmed placements were not overwritten.
+- 1,249 sections classified across 103 pages (Agent 9, section_purpose_map); placement now uses real section names and never places links in author bios, FAQs, TOCs, or CTAs.
+- 1,275 paragraphs mapped (Agent 8, paragraph_evidence_map): 328 market claims, 189 unsupported, 14 with genuine evidence pages attached (three gates: similarity, geography, subject).
+- Anchor rotation is intent-aware: the variant matching the link's sentence is preferred (growth sentence gets the Growth anchor).
+- 9 MCP servers (76 tools) expose the system to MCP clients, read-only by construction: `.mcp.json`, docs in `docs/07-MCP/01-MCP-SERVERS.md`.
+- Vector search can run on a real index (sqlite-vec) behind the unchanged VectorStore interface; brute-force stays the default. `scripts/31_vector_backend_setup.py` builds it (498 page + 911 paragraph vectors verified).
+- All placements confirmed except 1 honest unresolved (a source URL that renders as an empty catalogue shell).
 - Every adjacent recommendation has market relevance >= 0.30 and technology relevance >= 0.50.
 - Web-team handover CSV: `reports/approved_links_handover_phase3.csv`.
 - Current Phase 3 handoff: `docs/05-PHASES/PHASE-3/01-HANDOFF.md`.
 
-Next PRD work: review the 109 pending recommendations, add industry/country/region/service pages to the inventory so report plans can reach 10-30 opportunities, retry the 19 unresolved placements with live-site access, manually implement approved links, and later build the CMS deployment workflow.
+Next work: review the 109 pending recommendations (human), add
+industry/country/region/service pages to the inventory so report plans can
+reach 10-30 opportunities, re-export the approved CSV after new approvals,
+and hand it to the web team. Deployment/measurement (Agents 12/13) stay with
+the tech team by design.
 
 ## 📞 Support
 

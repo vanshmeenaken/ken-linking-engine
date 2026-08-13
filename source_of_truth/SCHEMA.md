@@ -76,6 +76,26 @@ anchor_banks stores safe anchor variants per target. Run
 python scripts/27_report_link_planning_migration.py after the Phase 3 migration
 to add the planning table and placement/plan fields.
 
+## Section and Evidence Tables (Agents 9 and 8)
+
+section_purpose_map stores one row per crawled section of a page: real
+heading, section_order, classified purpose, paragraph/internal-link counts,
+linkable flag, plain link guidance, and two honesty flags (purposeless,
+missing links). Rebuilt per page on each Agent 9 run. Migration:
+python scripts/29_section_purpose_migration.py
+
+paragraph_evidence_map stores one row per meaningful paragraph: section
+heading/purpose, paragraph text and sha256 knowledge hash, classification
+(market_claim or context), support_status (supported / section_supported /
+unsupported, claims only), and the best evidence page found (target node,
+url, type, similarity score) when one passes all three gates. Rebuilt per
+page on each Agent 8 run. Migration:
+python scripts/30_paragraph_evidence_migration.py
+
+ken_vectors.db.page_vectors / .paragraph_vectors are DERIVED sqlite-vec
+index files (not tracked in git); rebuild any time with
+python scripts/31_vector_backend_setup.py
+
 ## Verify
 ```
 python scripts/01_setup_db.py
