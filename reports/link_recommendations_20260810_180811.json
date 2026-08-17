@@ -1,0 +1,110 @@
+{
+  "generated_at": "2026-08-10T12:38:11.558174+00:00",
+  "dry_run": false,
+  "elapsed_seconds": 1.02,
+  "recommendations": 88,
+  "by_band": {
+    "priority": 2,
+    "strong": 3,
+    "secondary": 16,
+    "hold": 67
+  },
+  "deferred_factors": {
+    "freshness": 6,
+    "evidence_support": 5,
+    "sentiment_external": 2
+  },
+  "computable_weight_total": 87,
+  "sample": [
+    {
+      "source": "south-africa-e-learning-and-skills-platforms-market",
+      "target": "russia-e-learning-skills-platforms-market",
+      "anchor": "Russia E-Learning & Skills Platforms Market",
+      "score": 97.0,
+      "band": "priority",
+      "validation": "approved_for_review",
+      "reason": "south-africa-e-learning-and-skills-platforms-market and russia-e-learning-skills-platforms-market pass the market/technology relevance gate as adjacent_regional (market 1.00, technology 1.00, confidence 0.90); link with anchor 'Russia E-Learning & Skills Platforms Market' [priority]."
+    },
+    {
+      "source": "brazil-smart-agriculture-and-agri-drones-market",
+      "target": "germany-agri-drones-robotics-market",
+      "anchor": "Germany Agri Drones & Robotics Market",
+      "score": 96.2,
+      "band": "priority",
+      "validation": "approved_for_review",
+      "reason": "brazil-smart-agriculture-and-agri-drones-market and germany-agri-drones-robotics-market pass the market/technology relevance gate as adjacent_regional (market 0.98, technology 1.00, confidence 0.90); link with anchor 'Germany Agri Drones & Robotics Market' [priority]."
+    },
+    {
+      "source": "turkey-nutritional-supplements-and-wellness-market",
+      "target": "italy-nutritional-dietary-supplements-market",
+      "anchor": "Italy Nutritional & Dietary Supplements Market",
+      "score": 87.5,
+      "band": "strong",
+      "validation": "approved_for_review",
+      "reason": "turkey-nutritional-supplements-and-wellness-market and italy-nutritional-dietary-supplements-market pass the market/technology relevance gate as adjacent_regional (market 0.78, technology 1.00, confidence 0.90); link with anchor 'Italy Nutritional & Dietary Supplements Market' [strong]."
+    },
+    {
+      "source": "japan-freight-software-market",
+      "target": "japan-freight-automation-market",
+      "anchor": "Japan Freight Automation Market",
+      "score": 84.6,
+      "band": "strong",
+      "validation": "approved_for_review",
+      "reason": "japan-freight-software-market and japan-freight-automation-market pass the market/technology relevance gate as adjacent (market 0.98, technology 0.60, confidence 0.90); link with anchor 'Japan Freight Automation Market' [strong]."
+    },
+    {
+      "source": "usa-uav-drone-market",
+      "target": "qatar-uav-market",
+      "anchor": "Qatar UAV Market",
+      "score": 81.6,
+      "band": "strong",
+      "validation": "approved_for_review",
+      "reason": "usa-uav-drone-market and qatar-uav-market pass the market/technology relevance gate as adjacent_regional (market 0.70, technology 1.00, confidence 0.88); link with anchor 'Qatar UAV Market' [strong]."
+    },
+    {
+      "source": "global-light-sensor-market",
+      "target": "indonesia-autonomous-sensor-technology-market",
+      "anchor": "Indonesia Autonomous & Sensor Technology Market",
+      "score": 79.1,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "global-light-sensor-market and indonesia-autonomous-sensor-technology-market pass the market/technology relevance gate as adjacent_regional (market 0.66, technology 1.00, confidence 0.87); link with anchor 'Indonesia Autonomous & Sensor Technology Market' [secondary]."
+    },
+    {
+      "source": "south-africa-e-learning-and-skills-platforms-market",
+      "target": "south-africa-e-learning-market",
+      "anchor": "South Africa E-Learning Market",
+      "score": 78.9,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "south-africa-e-learning-and-skills-platforms-market and south-africa-e-learning-market pass the market/technology relevance gate as adjacent (market 0.66, technology 1.00, confidence 0.87); link with anchor 'South Africa E-Learning Market' [secondary]."
+    },
+    {
+      "source": "russia-e-learning-skills-platforms-market",
+      "target": "south-africa-e-learning-market",
+      "anchor": "South Africa E-Learning Market",
+      "score": 78.9,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "russia-e-learning-skills-platforms-market and south-africa-e-learning-market pass the market/technology relevance gate as adjacent_regional (market 0.66, technology 1.00, confidence 0.87); link with anchor 'South Africa E-Learning Market' [secondary]."
+    },
+    {
+      "source": "australia-renewable-energy-and-hydrogen-economy-market",
+      "target": "italy-renewable-hydrogen-mobility-market",
+      "anchor": "Italy Renewable Hydrogen Mobility Market",
+      "score": 78.2,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "australia-renewable-energy-and-hydrogen-economy-market and italy-renewable-hydrogen-mobility-market pass the market/technology relevance gate as adjacent_regional (market 0.64, technology 1.00, confidence 0.87); link with anchor 'Italy Renewable Hydrogen Mobility Market' [secondary]."
+    },
+    {
+      "source": "oman-business-process-outsourcing-bpo-market",
+      "target": "vietnam-customer-experience-business-process-outsourcing-market",
+      "anchor": "Vietnam Customer Experience Business Process Outsourcing Market",
+      "score": 75.7,
+      "band": "secondary",
+      "validation": "approved_for_review",
+      "reason": "oman-business-process-outsourcing-bpo-market and vietnam-customer-experience-business-process-outsourcing-market pass the market/technology relevance gate as adjacent_regional (market 0.56, technology 1.00, confidence 0.85); link with anchor 'Vietnam Customer Experience Business Process Outsourcing Market' [secondary]."
+    }
+  ]
+}
